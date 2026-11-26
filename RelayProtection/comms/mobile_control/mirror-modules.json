@@ -1,0 +1,295 @@
+{
+  "/ac": {
+    "module": "ac_test",
+    "label": "交流",
+    "stores": [],
+    "tabs": [
+      "1",
+      "2",
+      "3"
+    ],
+    "runtime": "analog",
+    "sharedRecords": true,
+    "result": "shared"
+  },
+  "/dc": {
+    "module": "dc_test",
+    "label": "直流",
+    "stores": [],
+    "tabs": [
+      "2",
+      "3"
+    ],
+    "runtime": "dc",
+    "sharedRecords": true,
+    "result": "shared"
+  },
+  "/dac": {
+    "module": "acdc_test",
+    "label": "交直流",
+    "stores": [],
+    "tabs": [
+      "1",
+      "2",
+      "3"
+    ],
+    "runtime": "analog",
+    "sharedRecords": true,
+    "result": "shared"
+  },
+  "/harmonic": {
+    "module": "harmonic_test",
+    "label": "谐波",
+    "stores": [],
+    "tabs": [
+      "1",
+      "2",
+      "3",
+      "4"
+    ],
+    "runtime": "harmonic",
+    "sharedRecords": true,
+    "result": "shared"
+  },
+  "/status": {
+    "module": "universal_sequence",
+    "label": "状态序列",
+    "stores": [],
+    "tabs": [
+      "1",
+      "2",
+      "3"
+    ],
+    "runtime": "sequence",
+    "sharedRecords": false,
+    "result": "sequence"
+  },
+  "/status-simple": {
+    "module": "universal_sequence",
+    "label": "状态序列普通",
+    "stores": [],
+    "tabs": [
+      "1",
+      "2",
+      "3"
+    ],
+    "runtime": "sequence",
+    "sharedRecords": false,
+    "result": "sequence"
+  },
+  "/steps-gradient": {
+    "module": "steps_gradient_test",
+    "label": "阶梯递变",
+    "stores": [
+      "steps-gradient"
+    ],
+    "tabs": [
+      "1",
+      "2",
+      "3"
+    ],
+    "runtime": "generic",
+    "sharedRecords": true,
+    "result": "shared"
+  },
+  "/slip-test": {
+    "module": "slip_test",
+    "label": "滑差",
+    "stores": [
+      "steps-gradient"
+    ],
+    "tabs": [
+      "1",
+      "2",
+      "3"
+    ],
+    "runtime": "generic",
+    "sharedRecords": false,
+    "result": "slip"
+  },
+  "/time-measurement": {
+    "module": "time_measurement",
+    "label": "时间测量",
+    "stores": [
+      "time-measurement"
+    ],
+    "tabs": [
+      "settings",
+      "control",
+      "do"
+    ],
+    "runtime": "generic",
+    "sharedRecords": false,
+    "result": "time"
+  },
+  "/inverse-time-it": {
+    "module": "inverse_time_it_test",
+    "label": "反时限IT",
+    "stores": [
+      "inverse-time-it"
+    ],
+    "tabs": [
+      "protection",
+      "points",
+      "control",
+      "tracking"
+    ],
+    "runtime": "generic",
+    "sharedRecords": false,
+    "result": "it"
+  },
+  "/inverse-time-vft": {
+    "module": "inverse_time_vft_test",
+    "label": "反时限VFT",
+    "stores": [
+      "inverse-time-vft"
+    ],
+    "tabs": [
+      "protection",
+      "points",
+      "control",
+      "tracking"
+    ],
+    "runtime": "generic",
+    "sharedRecords": false,
+    "result": "vft"
+  },
+  "/whole-group-test": {
+    "module": "lp_test",
+    "label": "整组",
+    "stores": [
+      "whole-group-test"
+    ],
+    "tabs": [
+      "fault",
+      "trigger",
+      "control",
+      "di",
+      "do",
+      "calc",
+      "output"
+    ],
+    "runtime": "generic",
+    "sharedRecords": false,
+    "result": "whole"
+  },
+  "/line-protection-verification": {
+    "module": "lp_test",
+    "label": "线路保护",
+    "stores": [
+      "whole-group-test",
+      "line-protection-verification"
+    ],
+    "tabs": [
+      "trigger",
+      "control",
+      "di",
+      "do",
+      "calc",
+      "output"
+    ],
+    "runtime": "generic",
+    "sharedRecords": false,
+    "result": "whole"
+  },
+  "/impedance-characteristic-test": {
+    "module": "impedance_characteristic_test",
+    "label": "阻抗",
+    "stores": [
+      "whole-group-test",
+      "impedance-characteristic-test"
+    ],
+    "tabs": [
+      "project",
+      "control",
+      "di",
+      "do",
+      "calc"
+    ],
+    "runtime": "generic",
+    "sharedRecords": false,
+    "result": "impedance"
+  },
+  "/differential-test-6ch": {
+    "module": "differential_test",
+    "label": "差动六路",
+    "stores": [
+      "differential-test"
+    ],
+    "tabs": [
+      "protect",
+      "project",
+      "control",
+      "aux",
+      "tracking"
+    ],
+    "runtime": "generic",
+    "sharedRecords": false,
+    "result": "differential"
+  },
+  "/differential-test-busbar": {
+    "module": "differential_test",
+    "label": "母差",
+    "stores": [
+      "differential-test"
+    ],
+    "tabs": [
+      "protect",
+      "project",
+      "control",
+      "aux",
+      "tracking"
+    ],
+    "runtime": "generic",
+    "sharedRecords": false,
+    "result": "differential"
+  },
+  "/railway-differential-test": {
+    "module": "differential_test",
+    "label": "电铁差动",
+    "stores": [
+      "railway-differential-test"
+    ],
+    "tabs": [
+      "protect",
+      "project",
+      "control",
+      "aux",
+      "tracking"
+    ],
+    "runtime": "generic",
+    "sharedRecords": false,
+    "result": "differential"
+  },
+  "/auto-quasi-sync": {
+    "module": "auto_quasi_sync_test",
+    "label": "自动准同期",
+    "stores": [
+      "auto-quasi-sync"
+    ],
+    "tabs": [
+      "project",
+      "exp",
+      "window"
+    ],
+    "runtime": "generic",
+    "sharedRecords": false,
+    "result": "aqs"
+  },
+  "/waveform-playback": {
+    "module": "waveform_playback",
+    "label": "波形回放",
+    "stores": [
+      "waveform-playback"
+    ],
+    "tabs": [
+      "cfg",
+      "preview",
+      "channel"
+    ],
+    "runtime": "generic",
+    "sharedRecords": false,
+    "result": "syncOnly",
+    "canControlTrial": false
+  }
+}

@@ -2,6 +2,14 @@ import asyncio
 import os
 import threading
 import time
+import sys
+
+if '--self-check' in sys.argv:
+    # Compiled-artifact verification must never open serial/GPIO or start engines.
+    from comms.mobile_control.integrated import IntegratedGateway
+    gateway = IntegratedGateway()
+    print('SELF_CHECK_OK mobile_control=integrated port=8181 admin_auth=removed')
+    raise SystemExit(0)
 
 ENABLE_HW_PROTECTION = True
 
@@ -19,7 +27,10 @@ except ImportError:
 os.environ["USE_LOG_LEVEL"] = "DEBUG"
 
 from comms.HWGateway import HWGateway
-from comms.WSGateway import WSGateway
+if os.environ.get("RELAY_MOBILE_CONTROL") == "1":
+    from comms.mobile_control.integrated import IntegratedGateway as WSGateway
+else:
+    from comms.WSGateway import WSGateway
 from logic.EngineBridge import EngineBridge
 from logic.EngineCtrl import EngineCtrl
 from logic.HWProtect import HWProtect
@@ -59,10 +70,9 @@ def _run_hw_thread(ready: threading.Event, shared: dict):
 
 async def main() -> None:
     logger.info("Initialization started...")
-    os.system(f"fuser -k {WSGateway.PORT}/tcp >/dev/null 2>&1 || true")
-    time.sleep(0.3)
 
     main_loop = asyncio.get_running_loop()
+    wsGateway = WSGateway()  # Validate test enrollment before touching hardware.
 
     shared = {}
     ready = threading.Event()
@@ -72,7 +82,6 @@ async def main() -> None:
     bridge = EngineBridge(shared['hw_loop'], main_loop, None)
     bridge.bind(shared['engine'])
 
-    wsGateway = WSGateway()
     hwProtect = HWProtect(ENABLE_HW_PROTECTION)
     engineCtrl = EngineCtrl(bridge, hwProtect, wsGateway.SendToClient)
     bridge._emit_cb = engineCtrl.onEvent

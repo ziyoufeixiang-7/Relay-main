@@ -1,0 +1,20 @@
+[Unit]
+Description=Integrated six-phase mobile backend TEST
+After=network.target relay-mobile-network-test.service
+Conflicts=relay-protection.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/relay-integrated-test/current
+Environment=RELAY_MOBILE_CONTROL=1
+Environment=RELAY_TEST_DEVICE_CONFIG=/etc/relay-mobile-test/device.json
+Environment=RELAY_TEST_NETWORK_SOCKET=/run/relay-mobile-network-test/control.sock
+Environment=RELAY_MIRROR_NETWORK=1
+ExecStart=/opt/relay-integrated-test/current/SysEngine.bin
+Restart=on-failure
+RestartSec=3
+OOMScoreAdjust=-888
+
+[Install]
+WantedBy=multi-user.target

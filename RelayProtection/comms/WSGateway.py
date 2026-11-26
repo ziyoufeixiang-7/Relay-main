@@ -3,7 +3,6 @@ import orjson
 import websockets
 from typing import Optional
 from utils.SysLogger import GetLogger
-from comms.AdminAuth import AdminSession, local_kiosk
 
 class WSGateway:
     HOST = '0.0.0.0'
@@ -38,7 +37,6 @@ class WSGateway:
                 pass
                 
         self.activeClient = websocket
-        admin = AdminSession()  # never store authentication on the shared dispatcher
         self.logger.info(f"Client connected from {websocket.remote_address}")
         
         try:
@@ -47,14 +45,6 @@ class WSGateway:
                     msg = orjson.loads(message)
                     if not isinstance(msg, dict):
                         self.logger.warning("Dropped non-object JSON message.")
-                        continue
-                    if msg.get("cmd") == "adminAuth":
-                        if self.activeClient is not websocket:
-                            break
-                        reply = admin.reply(msg) if local_kiosk(websocket) else {
-                            "type": "adminAuthResult", "success": False, "error": "local_kiosk_only"}
-                        # Do not log proofs or queue replies for a later/replacement client.
-                        await websocket.send(orjson.dumps(reply).decode())
                         continue
                     if msg.get("action") in ("auth", "wifiConnect"):
                         self.logger.debug("[WS RX] (credentials omitted)")
@@ -73,7 +63,6 @@ class WSGateway:
         except Exception as e:
             self.logger.error(f"Unexpected edge error: {e}")
         finally:
-            admin.clear()
             if self.activeClient == websocket:
                 self.activeClient = None
                 self.logger.warning("Active client disconnected. Triggering emergency anchor.")

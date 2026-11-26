@@ -62,6 +62,8 @@ mkdir -p "$BUILD_DIR"
     --include-module=lgpio \
     --include-package=orjson \
     --include-package=websockets \
+    --jobs=1 \
+    --include-data-file="$SRC_DIR/comms/mobile_control/mirror-modules.json=comms/mobile_control/mirror-modules.json" \
     --include-data-file="$SRC_DIR/config/calibration.json=config/calibration.json" \
     --include-data-file="$SRC_DIR/config/calibration_ac_frequency.json=config/calibration_ac_frequency.json" \
     --lto=no \
