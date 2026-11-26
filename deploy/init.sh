@@ -310,7 +310,7 @@ SERVICE_EOF
 Type=Application
 Name=Kiosk
 Comment=Kiosk
-Exec=chromium --kiosk --incognito --ozone-platform=wayland --disable-pinch --noerrdialogs --disable-session-crashed-bubble --password-store=basic --overscroll-history-navigation=0 --renderer-process-limit=1 --process-per-site --disable-background-networking --disable-component-update --disable-sync --disable-extensions --disable-hang-monitor file:///opt/RelayProtection/index.html
+Exec=chromium --kiosk --ozone-platform=wayland --disable-pinch --noerrdialogs --disable-session-crashed-bubble --password-store=basic --overscroll-history-navigation=0 --renderer-process-limit=1 --process-per-site --disable-background-networking --disable-component-update --disable-sync --disable-extensions --disable-hang-monitor file:///opt/RelayProtection/index.html
 AUTOSTART_EOF
     chown -R pi:pi /home/pi/.config
     mkdir -p /etc/chromium/policies/managed

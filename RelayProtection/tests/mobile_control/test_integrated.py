@@ -105,4 +105,48 @@ class IntegratedTests(unittest.IsolatedAsyncioTestCase):
     async def test_test_device_enrollment_is_required(self):
         with patch('comms.mobile_control.integrated.load', return_value=None):
             with self.assertRaisesRegex(RuntimeError, 'enrolled'):
-                IntegratedGateway()
+                IntegratedGateway(require_enrollment=True)
+    async def test_remote_system_configuration_actions_allowed_but_updates_blocked(self):
+        await self.action(self.local, 'remote_enable')
+        await self.action(self.phone, 'claim')
+        for action in ['wifiScan', 'wifiStatus', 'wifiSavedList', 'wifiConnect', 'wifiConnectSaved', 'wifiForget']:
+            await self.action(self.phone, 'command', requestId=action, lease=self.phone.lease,
+                              command={'cmd': 'sysConfig', 'action': action})
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+        calls=[c.args[0]['action'] for c in self.gateway.dispatcher.HandleCommand.await_args_list]
+        self.assertEqual(calls, ['wifiScan', 'wifiStatus', 'wifiSavedList', 'wifiConnect', 'wifiConnectSaved', 'wifiForget'])
+        self.gateway.dispatcher.HandleCommand.reset_mock()
+        for action in ['checkUpdate', 'startUpdate', 'rollback', 'usbScan']:
+            await self.action(self.phone, 'command', requestId=action, lease=self.phone.lease,
+                              command={'cmd': 'sysConfig', 'action': action})
+        await self.action(self.phone, 'command', requestId='cal', lease=self.phone.lease,
+                          command={'cmd': 'autoCal', 'action': 'auth'})
+        self.gateway.dispatcher.HandleCommand.assert_not_awaited()
+
+    async def test_network_write_blocks_start_and_idle_disconnect_does_not_need_new_stop(self):
+        terminal=asyncio.Event();terminal.set()
+        self.gateway.dispatcher._stopEvent=terminal
+        pending=asyncio.get_running_loop().create_future()
+        self.gateway.dispatcher.HandleCommand.return_value=pending
+        await self.action(self.local, 'remote_enable')
+        await self.action(self.phone, 'claim')
+        await self.action(self.phone, 'command', requestId='wifi', lease=self.phone.lease,
+                          command={'cmd': 'sysConfig', 'action': 'wifiConnect'})
+        self.assertTrue(self.gateway.network_busy)
+        self.assertFalse(self.gateway.state(self.phone)['canStart'])
+        await self.action(self.local, 'reclaim')
+        self.assertIsNone(self.phone.lease)
+        self.assertEqual(self.gateway.phase, 'local')
+        self.gateway.dispatcher.HandleCommand.assert_awaited_once()
+        pending.set_result(None)
+        await asyncio.gather(*self.gateway.tasks)
+        self.assertFalse(self.gateway.network_busy)
+        self.assertTrue(self.gateway.state(self.local)['canStart'])
+
+    async def test_production_entry_does_not_require_a_test_enrollment_file(self):
+        import os
+        with patch.dict(os.environ, {}, clear=True):
+            gateway=IntegratedGateway()
+        self.assertIsNone(gateway.config)
+        self.assertEqual(gateway.port, 8080)

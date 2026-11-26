@@ -27,7 +27,7 @@ except ImportError:
 os.environ["USE_LOG_LEVEL"] = "DEBUG"
 
 from comms.HWGateway import HWGateway
-if os.environ.get("RELAY_MOBILE_CONTROL") == "1":
+if os.environ.get("RELAY_MOBILE_CONTROL", "1") != "0":
     from comms.mobile_control.integrated import IntegratedGateway as WSGateway
 else:
     from comms.WSGateway import WSGateway

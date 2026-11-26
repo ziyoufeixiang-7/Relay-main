@@ -27,6 +27,7 @@ TEST_CLIENT_PING_TIMEOUT = 60
 TEST_CLIENT_SEND_TIMEOUT = 8
 MAX_CLIENT_BACKLOG_BYTES = 16 * 1024 * 1024
 TEST_COMMANDS = {'start', 'stop', 'update_static', 'next_node'}
+REMOTE_SYSTEM_ACTIONS = {'wifiScan', 'wifiStatus', 'wifiSavedList', 'wifiConnect', 'wifiConnectSaved', 'wifiForget'}
 CRITICAL_EVENTS = {'state', 'rejected', 'accepted', 'ui_seed'}
 CRITICAL_TYPES = {'stop', 'error', 'load', 'value_update', 'report'}
 _MIRROR_FILE = Path(__file__).with_name('mirror-modules.json')
@@ -744,7 +745,7 @@ class Gateway:
                 if not self.fresh() or self.phase not in {'local', 'remote'}:
                     await self.reject(client, 'device_unavailable', request_id)
                     return
-                if client.role == 'remote' and cmd not in TEST_COMMANDS:
+                if client.role == 'remote' and cmd not in TEST_COMMANDS and not (cmd == 'sysConfig' and command.get('action') in REMOTE_SYSTEM_ACTIONS):
                     await self.reject(client, 'local_only', request_id)
                     return
                 if self.ui_mirror and cmd == 'start' and any(entry.get('module') == command.get('module') and entry.get('canControlTrial') is False for entry in MIRROR_DEFINITIONS.values()):
@@ -764,7 +765,7 @@ class Gateway:
                 if cmd in {'update_static', 'next_node'} and (self.active is not True or self.pending_start):
                     await self.reject(client, 'device_not_running', request_id)
                     return
-                if cmd not in TEST_COMMANDS and (self.owner or not self.idle()):
+                if cmd not in TEST_COMMANDS and not self.idle():
                     await self.reject(client, 'device_not_idle', request_id)
                     return
                 if cmd == 'start':

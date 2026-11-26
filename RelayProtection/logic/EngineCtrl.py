@@ -305,7 +305,7 @@ class EngineCtrl:
             case "stop":
                 self.stopTest()
             case "sysConfig":
-                self.sysConfig.handle_command(msg)
+                return self.sysConfig.handle_command(msg)
             case "autoCal":
                 self.autoCal.handle_command(msg)
             case _:

@@ -25,18 +25,43 @@ class _EngineEndpoint:
 class IntegratedGateway(Gateway):
     PORT = 8080
 
-    def __init__(self, *, require_enrollment=True, host='0.0.0.0', port=PORT):
+    def __init__(self, *, require_enrollment=None, host='0.0.0.0', port=PORT):
         super().__init__(upstream=None, ui_mirror=True, independent_remote=True,
                          origins=[])
         self.host, self.port = host, port
         self.dispatcher = None
         self.events = asyncio.Queue(maxsize=4096)
+        enrolled_test = bool(os.environ.get('RELAY_TEST_DEVICE_CONFIG'))
+        if require_enrollment is None:
+            require_enrollment = enrolled_test
         self.config = load() if require_enrollment else None
         if require_enrollment and (not self.config or
                 self.config['device_serial'].lower() != device_serial()):
             raise RuntimeError('Integrated mobile backend requires an enrolled test device')
         self.frontend_path = os.environ.get('RELAY_FRONTEND_PATH',
                                             str(Path.cwd() / 'index.html'))
+
+    def engine_idle(self):
+        terminal = getattr(self.dispatcher, '_stopEvent', None)
+        calibration = getattr(self.dispatcher, 'autoCal', None)
+        return (terminal is None or terminal.is_set()) and not getattr(self.dispatcher, 'running', False) and not (calibration and calibration.is_running())
+
+    def idle(self):
+        return self.engine_idle() and super().idle()
+
+    async def begin_stop(self, reason, *, release=True):
+        # A Wi-Fi change may disconnect an already idle owner. Existing terminal
+        # acknowledgement is sufficient; never manufacture a hardware stop event.
+        busy = self.network_busy
+        confirmed_idle = busy and self.engine_idle() and self.active is False and self.fresh() and not self.pending_start
+        if confirmed_idle:
+            self.network_busy = False
+        try:
+            await super().begin_stop(reason, release=release)
+        finally:
+            if confirmed_idle:
+                self.network_busy = busy
+                await self.states(force=True)
 
     def state(self, client):
         return {**super().state(client), 'simulation': False,
@@ -51,7 +76,27 @@ class IntegratedGateway(Gateway):
             if terminal is not None and not terminal.is_set():
                 raise RuntimeError('Previous hardware terminal acknowledgement pending')
         # This stays on the main event loop. Hardware timing stays in EngineBridge.
-        await asyncio.wait_for(self.dispatcher.HandleCommand(data), self.send_timeout)
+        writes_network = data.get('cmd') == 'sysConfig' and data.get('action') in {'wifiConnect', 'wifiConnectSaved', 'wifiForget'}
+        if writes_network:
+            self.network_busy = True
+        try:
+            result = await asyncio.wait_for(self.dispatcher.HandleCommand(data), self.send_timeout)
+        except BaseException:
+            if writes_network:
+                self.network_busy = False
+            raise
+        if writes_network:
+            async def finished():
+                try:
+                    if isinstance(result, asyncio.Future):
+                        await result
+                except Exception:
+                    await self.SendToClient({'type': 'error', 'code': 'system_config_failed', 'msg': 'System configuration failed'})
+                finally:
+                    self.network_busy = False
+                    await self.states(force=True)
+            self.tasks.append(asyncio.create_task(finished()))
+            await self.states(force=True)
 
     async def SendToClient(self, data):
         # EngineCtrl emits callbacks as tasks. Queue them before taking the control

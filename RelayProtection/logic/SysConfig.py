@@ -76,6 +76,7 @@ class SysConfig:
             task = asyncio.create_task(handler(msg))
             self._tasks.add(task)
             task.add_done_callback(self._tasks.discard)
+            return task
         else:
             self._sendError(f"Unknown SysConfig action: {action}")
 
