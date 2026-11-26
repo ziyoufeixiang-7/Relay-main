@@ -1,12 +1,12 @@
 """One enrolled Pi50 local-test switch. Run as root only after compilation succeeds."""
-import hashlib,json,os,shutil,subprocess,time,urllib.request
+import hashlib,json,os,shutil,subprocess,time,urllib.request,uuid
 from pathlib import Path
 
 BUILD=Path('/home/pi/relay-integrated-build')
 ROOT=Path('/opt/relay-integrated-test')
 ORIGINAL=Path('/opt/RelayProtection')
 META=json.loads((BUILD/'deployment.json').read_text())
-IDENT='20261126-'+META['backend_commit'][:7]+'-'+META['frontend_commit'][:7]
+IDENT='20261126-'+META['backend_commit'][:7]+'-'+META['frontend_commit'][:7]+'-'+uuid.uuid4().hex[:6]
 RELEASE=ROOT/'releases'/IDENT
 BACKUP=ROOT/'backups'/IDENT
 NETWORK_DROP=Path('/etc/systemd/system/relay-mobile-network-test.service.d/50-integrated-source.conf')
@@ -31,6 +31,8 @@ if os.geteuid()!=0:raise SystemExit('Run as root')
 assert META['target']=='192.168.1.50' and META['build_mode']=='6phase-test'
 assert (BUILD/'source-commit.txt').read_text().strip()==META['backend_commit']
 assert 'BUILD_OK' in (BUILD/'compile.log').read_text()
+assert (BUILD/'deploy/build/SysEngine.dist/comms/mobile_control/mirror-modules.json').is_file()
+assert (BUILD/'deploy/build/SysEngine.dist/config/calibration.json').is_file()
 assert digest(BUILD/'frontend/index.html')==META['frontend_sha256']
 # No WS connection is opened to the original single-client backend.
 recent=run('journalctl','-u','relay-protection.service','-n','30','--no-pager')
@@ -56,8 +58,6 @@ META['release']=str(RELEASE)
 META['backup']=str(BACKUP)
 (RELEASE/'build-info.json').write_text(json.dumps(META,indent=2))
 (RELEASE/'version.json').write_text(json.dumps({'version':'0.0.143-local-test','build_mode':'6phase-test','git_commit':META['backend_commit'],'frontend_git_commit':META['frontend_commit'],'local_test':True,'sha256':META['frontend_sha256']},indent=2))
-env=os.environ.copy();env['RELAY_TEST_DEVICE_CONFIG']='/etc/relay-mobile-test/device.json'
-print(run(str(RELEASE/'SysEngine.bin'),'--self-check',env=env),flush=True)
 
 rollback=f'''#!/usr/bin/env python3
 import json,subprocess,shutil
@@ -91,14 +91,13 @@ try:
     # The network helper restores saved profiles on startup. Defer its restart
     # to preserve the current Wi-Fi; the next normal boot uses the migrated path.
     run('systemctl','enable','--now','relay-integrated-test.service')
-    result=wait_health()
-    # Update the file kiosk's existing entry only after the backend is healthy.
+    # Deploy both components before the final test stage, as requested.
     for name in ['index.html','index.html.sha256']:
         tmp=ORIGINAL/(name+'.integrated-next');shutil.copy2(RELEASE/name,tmp);os.replace(tmp,ORIGINAL/name)
     assert digest(ORIGINAL/'index.html')==META['frontend_sha256']
     for p,value in state['protected'].items():assert digest(Path(p))==value,p
     (BACKUP/'deployment.json').write_text(json.dumps(META,indent=2))
-    print(json.dumps({'deployed':META,'health':result},indent=2),flush=True)
+    print(json.dumps({'deployed':META,'testing':'pending'},indent=2),flush=True)
 except BaseException:
     print(run('journalctl','-u','relay-integrated-test.service','-n','30','--no-pager',check=False),flush=True)
     run('python3',str(BACKUP/'rollback.py'),check=False)
