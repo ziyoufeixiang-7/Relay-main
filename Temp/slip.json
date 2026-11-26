@@ -1,0 +1,225 @@
+{
+    "module": "slip_test",
+    "cmd": "start",
+    "params": {
+        "debounce": 15,
+        "sys": {
+            "doMask": 0,
+            "doCtrlMask": 0,
+            "logicMask": 7
+        },
+        "statics": {
+            "0": {
+                "0": [
+                    0,
+                    50
+                ],
+                "1": [
+                    81.64962003,
+                    0
+                ]
+            },
+            "1": {
+                "0": [
+                    0,
+                    50
+                ],
+                "1": [
+                    81.64962003,
+                    -120
+                ]
+            },
+            "2": {
+                "0": [
+                    0,
+                    50
+                ],
+                "1": [
+                    81.64962003,
+                    120
+                ]
+            },
+            "3": {
+                "0": [
+                    0,
+                    50
+                ],
+                "1": [
+                    81.64962003,
+                    0
+                ]
+            },
+            "4": {
+                "0": [
+                    0,
+                    50
+                ],
+                "1": [
+                    81.64962003,
+                    -120
+                ]
+            },
+            "5": {
+                "0": [
+                    0,
+                    50
+                ],
+                "1": [
+                    81.64962003,
+                    120
+                ]
+            },
+            "6": {
+                "0": [
+                    0,
+                    50
+                ],
+                "1": [
+                    0,
+                    0
+                ]
+            },
+            "7": {
+                "0": [
+                    0,
+                    50
+                ],
+                "1": [
+                    0,
+                    -120
+                ]
+            },
+            "8": {
+                "0": [
+                    0,
+                    50
+                ],
+                "1": [
+                    0,
+                    120
+                ]
+            },
+            "9": {
+                "0": [
+                    0,
+                    50
+                ],
+                "1": [
+                    0,
+                    0
+                ]
+            },
+            "10": {
+                "0": [
+                    0,
+                    50
+                ],
+                "1": [
+                    0,
+                    -120
+                ]
+            },
+            "11": {
+                "0": [
+                    0,
+                    50
+                ],
+                "1": [
+                    0,
+                    120
+                ]
+            }
+        },
+        "payload": {
+            "testType": 0,
+            "slipVarType": "0_0",
+            "slipPhasor": 2,
+            "slipPhase": "0",
+            "slipStart": 50,
+            "actionSearchStart": 50,
+            "actionSearchEnd": 40,
+            "actionSearchStep": -0.1,
+            "slipDDt": -1,
+            "returnTime": 1000,
+            "waitTime": 1000
+        }
+    }
+}
+
+
+"payload": {
+    "testType": 0,
+    "slipVarType": "0_0",
+    "slipPhasor": 2,
+    "slipPhase": "0,1,2",
+    "slipStart": 40,
+    "actionSearchStart": 40,
+    "actionSearchEnd": 39.96,
+    "actionSearchStep": -0.03999999999999915,
+    "slipDDt": -1,
+    "returnTime": 1000,
+    "waitTime": 1000
+}
+
+"payload": {
+    "testType": 1,
+    "slipVarType": "0_1",
+    "slipPhasor": 0,
+    "slipPhase": "6",
+    "slipStart": 56.5685425,
+    "slipEnd": 56.51197396,
+    "slipDDt": -1.41421356,
+    "timerStartValue": 56.5685425,
+    "returnTime": 1000,
+    "waitTime": 1000
+}
+
+"payload": {
+    "testType": 2,
+    "slipVarType": "0_0",
+    "slipPhasor": 0,
+    "slipPhase": "0",
+    "slipStart": 70.71067812,
+    "slipEnd": 56.5685425,
+    "slipDDt": -1.41421356,
+    "ddtSearchStart": 7.7781746,
+    "ddtSearchEnd": 3.53553391,
+    "ddtSearchStep": -0.14142135,
+    "returnTime": 1000,
+    "waitTime": 1000
+}
+
+
+"payload": {
+    "testType": 3,
+    "slipVarType": "0_0",
+    "slipPhasor": 0,
+    "slipPhase": "0,1,2,3,4,5",
+    "slipStart": 70.71067812,
+    "slipEnd": 56.5685425,
+    "slipDDt": -1.41421356,
+    "lockPhase": "6",
+    "lockSearchStart": 0.14142136,
+    "lockSearchEnd": 1.41421357,
+    "lockSearchStep": 0.14142136,
+    "returnTime": 1000,
+    "waitTime": 1000
+}
+
+
+"payload": {
+    "testType": 4,
+    "slipVarType": "5",
+    "slipPhasor": 2,
+    "slipPhase": "0",
+    "slipStart": 50,
+    "slipEnd": 40,
+    "slipDDt": -1,
+    "lockVarType": "0_0",
+    "lockPhase": "0",
+    "lockSearchStart": 0.14142136,
+    "lockSearchEnd": 1.41421357,
+    "lockSearchStep": 0.14142136,
+    "returnTime": 1000,
+    "waitTime": 1000
+}

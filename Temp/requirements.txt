@@ -1,0 +1,26 @@
+# ============================================
+# RelayProtection 项目依赖
+# ============================================
+
+# --- 运行时必需 ---
+websockets              # WebSocket 服务端通信 (WSGateway.py)
+orjson                  # 高性能 JSON 序列化 (WSGateway.py)
+pyserial-asyncio        # 异步串口通信 FPGA (HWGateway.py)，自动安装 pyserial
+gpiozero                # 树莓派 GPIO 控制 (HWProtect.py)
+lgpio                   # gpiozero 在 Pi5 上的底层驱动后端
+rpi-lgpio               # lgpio 的树莓派适配层
+
+# --- 运行时可选 ---
+uvloop                  # 高性能事件循环 (SysEngine.py, try/except 缺失不影响)
+pyvisa                  # VISA 仪器通信 API 层 (AutoCal.py 动态导入)
+pyvisa-py               # pyvisa 纯 Python 后端，Pi 无 NI-VISA 驱动时必需
+pyusb                   # pyvisa-py 的 USB 传输层 (万用表 USB-TMC 通信)
+
+# --- 构建工具 (Nuitka 编译时需要，开发运行不需要) ---
+nuitka
+ordered-set            # Nuitka 推荐的可选加速依赖
+patchelf               # Nuitka standalone 构建在 Linux 上的依赖
+
+# --- 开发工具 (可选) ---
+pyflakes               # 静态分析 / 未使用 import 检查
+ruff                   # 代码格式化 / lint

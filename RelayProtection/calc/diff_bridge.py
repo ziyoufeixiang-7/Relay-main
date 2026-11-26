@@ -1,0 +1,211 @@
+"""
+diff_bridge.py — 差动试验桥接函数
+
+将前端 payload JSON 参数映射到 diff.py 的 solve() + calculate_physical_currents()，
+一次调用即可从 (ir, id) 坐标得到 6 路物理电流的 [幅值, 相位°]。
+"""
+
+import cmath
+import math
+from typing import Dict, Any, List
+
+from calc.diff import solve, calculate_physical_currents
+
+
+def compute_6ch(ir: float, id_val: float, payload: Dict[str, Any]) -> List[List[float]]:
+    """
+    核心桥接函数：输入 (ir, id) 坐标 + 前端 payload，输出 6 路电流参数。
+
+    参数:
+        ir:      制动电流坐标值
+        id_val:  动作电流坐标值
+        payload: 前端下发的 params.payload 完整字典
+
+    返回:
+        [[amp0, angle0], [amp1, angle1], ..., [amp5, angle5]]
+        索引 0~2 = 侧1 (Ia, Ib, Ic)
+        索引 3~5 = 侧2 (Ix, Iy, Iz)
+    """
+    # ── 1. 提取参数 ──
+    eq = payload.get("equationSettings", {})
+    prot = payload.get("protectionSettings", {})
+    proj = payload.get("projectSettings", {})
+
+    id_eq = eq.get("idEquation", "id_sum")
+    ir_eq = eq.get("irEquation", "ir_diff_k")
+    k = eq.get("kFactor", 2.0)
+    kp1 = eq.get("kp1", 1.0)
+    kp2 = eq.get("kp2", 1.0)
+
+    test_phase = proj.get("testPhase", "A")
+
+    l1_type = prot.get("vectorGroupLetter1", "y")
+    l2_type = prot.get("vectorGroupLetter2", "y")
+    # 兼容两种前端格式:
+    # - 新格式: vectorGroupHighSideClock + vectorGroupLowSideClock (拆分)
+    # - 旧格式: vectorGroupClock (单字段, 等于 lowClock, highClock 固定 0)
+    if "vectorGroupHighSideClock" in prot:
+        high_clock = int(prot["vectorGroupHighSideClock"])
+        low_clock = int(prot.get("vectorGroupLowSideClock", "0"))
+    else:
+        high_clock = 0
+        low_clock = int(prot.get("vectorGroupClock", "0"))
+    phase_correction = prot.get("phaseCorrection", "none")
+    zero_seq_correction = prot.get("zeroSequenceCorrection", False)
+
+    # ── 2. 方程求解：(ir, id) → (i1, i2, theta2) ──
+    i1_out, i2_out, theta2 = solve(
+        id_val=id_val,
+        ir_val=ir,
+        k=k,
+        kp1=kp1,
+        kp2=kp2,
+        id_eq=id_eq,
+        ir_eq=ir_eq
+    )
+
+    # ── 3. 状态空间方程：标量 → 6 路复数电流 ──
+    phys1, phys2 = calculate_physical_currents(
+        i1_prime=i1_out,
+        i2_prime=i2_out,
+        theta2=theta2,
+        test_phase=test_phase,
+        phase_correction=phase_correction,
+        zero_seq_correction=zero_seq_correction,
+        high_clock=high_clock,
+        low_clock=low_clock,
+        l1_type=l1_type,
+        l2_type=l2_type
+    )
+
+    # ── 4. 复数 → [幅值, 相位°] ──
+    result = []
+    for c in phys1 + phys2:
+        amp = abs(c)
+        angle = math.degrees(cmath.phase(c)) if amp > 1e-9 else 0.0
+        result.append([round(amp, 6), round(angle, 4)])
+
+    return result
+
+def _should_multiply_sqrt3(l_type: str, phase_correction: str) -> bool:
+    """
+    判断 2I 模式下某侧是否需要乘以 √3。
+
+    规则极简：
+      - phaseCorrection = "y-side"     → 匹配 Y 侧 (l_type == "y") 则乘 √3
+      - phaseCorrection = "delta-side" → 匹配 D 侧 (l_type == "d") 则乘 √3
+      - phaseCorrection = "none"       → 不乘
+    """
+    if phase_correction == "y-side" and l_type == "y":
+        return True
+    if phase_correction == "delta-side" and l_type == "d":
+        return True
+    return False
+
+
+def compute_2i(ir: float, id_val: float, payload: Dict[str, Any]) -> List[List[float]]:
+    """
+    分相差动 (2I) 桥接函数：输入 (ir, id) + payload，输出 2 路电流参数。
+
+    与 compute_6ch 不同：不做 3 相展开，直接输出标量 i1/i2。
+    根据 vectorGroupLetter + phaseCorrection 判断是否乘 √3。
+
+    返回:
+        [[i1_amp, i1_angle], [i2_amp, i2_angle]]
+    """
+    # ── 1. 提取参数 ──
+    eq = payload.get("equationSettings", {})
+    prot = payload.get("protectionSettings", {})
+
+    id_eq = eq.get("idEquation", "id_sum")
+    ir_eq = eq.get("irEquation", "ir_diff_k")
+    k = eq.get("kFactor", 2.0)
+    kp1 = eq.get("kp1", 1.0)
+    kp2 = eq.get("kp2", 1.0)
+
+    l1_type = prot.get("vectorGroupLetter1", "y")
+    l2_type = prot.get("vectorGroupLetter2", "y")
+    phase_correction = prot.get("phaseCorrection", "none")
+
+    i1_angle = 0.0
+    i2_angle = 180.0
+
+    # ── 2. 方程求解 ──
+    i1_out, i2_out, theta2 = solve(
+        id_val=id_val,
+        ir_val=ir,
+        k=k,
+        kp1=kp1,
+        kp2=kp2,
+        id_eq=id_eq,
+        ir_eq=ir_eq
+    )
+
+    # ── 3. √3 幅值补偿（简化判断） ──
+    if _should_multiply_sqrt3(l1_type, phase_correction):
+        i1_out *= math.sqrt(3)
+    if _should_multiply_sqrt3(l2_type, phase_correction):
+        i2_out *= math.sqrt(3)
+
+    # ── 4. 输出 [幅值, 相位°] ──
+    # 侧1 相位 = 0° (参考相)
+    # 侧2 相位 = i2_angle + theta2 (theta2 来自 solve)
+    side2_angle = i2_angle + theta2
+
+    # 归一化到 [-180, 180]
+    side2_angle = ((side2_angle + 180) % 360) - 180
+
+    return [
+        [round(abs(i1_out), 6), round(i1_angle, 4)],
+        [round(abs(i2_out), 6), round(side2_angle, 4)],
+    ]
+
+
+# ── 内置测试 ──
+if __name__ == "__main__":
+    # 典型用例：变压器 Y/d-11, id_sum, ir_diff_k, K=2, A相差动
+    test_payload = {
+        "equationSettings": {
+            "idEquation": "id_sum",
+            "irEquation": "ir_diff_k",
+            "kFactor": 2.0,
+            "kp1": 1.0,
+            "kp2": 1.0
+        },
+        "protectionSettings": {
+            "vectorGroupLetter1": "y",
+            "vectorGroupLetter2": "d",
+            "vectorGroupHighSideClock": "0",
+            "vectorGroupLowSideClock": "11",
+            "phaseCorrection": "none",
+            "zeroSequenceCorrection": False
+        },
+        "projectSettings": {
+            "testPhase": "A"
+        }
+    }
+
+    ir_test = 1.0
+    id_test = 0.5
+
+    channels = compute_6ch(ir_test, id_test, test_payload)
+
+    print(f"输入: ir={ir_test}, id={id_test}")
+    print(f"方程: id_sum + ir_diff_k, K=2, Y/d-11, 无校正, A相")
+    print()
+
+    labels = ["Ia", "Ib", "Ic", "Ix", "Iy", "Iz"]
+    for i, (amp, ang) in enumerate(channels):
+        print(f"  {labels[i]}: {amp:8.4f} A ∠ {ang:8.2f}°")
+
+    # 手算验证:
+    # solve(固定I2): i2 = ir*k/2 = 1.0, i1 = i2+id = 1.5, theta2=180°
+    # in1=in2=1 → i1_out=1.5, i2_out=1.0
+    # phaseCorrection=none → 侧2需叠加钟点角差 (12-11)*30=30°
+    # A相单相: phys1=[1.5∠0°, 0, 0], phys2=[1.0∠(180+30)°, 0, 0]
+    print()
+    print("手算预期:")
+    print(f"  Ia: 1.5000 A ∠ 0.00°")
+    print(f"  Ix: 1.0000 A ∠ 210.00°")
+    print(f"  其余: 0 A")
+

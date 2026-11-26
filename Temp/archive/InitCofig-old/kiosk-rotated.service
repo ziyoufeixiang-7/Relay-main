@@ -1,0 +1,31 @@
+[Unit]
+Description=Kiosk Browser (Cage + Chromium) - Rotated 90°
+After=relay-protection.service
+Wants=relay-protection.service
+
+[Service]
+Type=simple
+User=pi
+# Wayland runtime
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=WLR_LIBINPUT_NO_DEVICES=1
+
+ExecStart=/usr/bin/cage -s -r -- /usr/bin/chromium \
+    --kiosk \
+    --noerrdialogs \
+    --disable-infobars \
+    --no-first-run \
+    --disable-translate \
+    --disable-suggestions-ui \
+    --disable-save-password-bubble \
+    --disable-session-crashed-bubble \
+    --autoplay-policy=no-user-gesture-required \
+    --check-for-update-interval=31536000 \
+    --disable-features=TranslateUI \
+    file:///opt/RelayProtection/index.html
+
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,216 @@
+import streamlit as st
+import cmath
+import math
+
+# ==========================================
+# 1. 基础数学工具函数
+# ==========================================
+def to_complex(mag, ang_deg):
+    """将幅值和角度(度)转换为复数"""
+    return cmath.rect(mag, math.radians(ang_deg))
+
+def normalize_angle(deg):
+    """将角度标准化到 -180° ~ 180° 区间"""
+    deg = (deg + 180) % 360 - 180
+    if deg == -180.0: deg = 180.0
+    return deg
+
+def to_polar_deg(c):
+    """将复数转换为幅值和角度(度)"""
+    if abs(c) < 1e-6: 
+        return 0.0, 0.0
+    mag = abs(c)
+    ang_deg = math.degrees(cmath.phase(c))
+    return mag, normalize_angle(ang_deg)
+
+# ==========================================
+# 2. 核心数学计算引擎 (独立封装)
+# ==========================================
+def calculate_single_phase_fault(
+    ft, sys_v, i_load_amp, i_load_ang, 
+    dir_val, i_f_amp, z_mag, z_ang, 
+    formula, kl_params, ct_val
+):
+    """
+    计算单相接地故障的商用硬件输出相量
+    
+    参数:
+    - ft: 故障类型 (0=A相, 1=B相, 2=C相)
+    - sys_v: 系统额定相电压幅值
+    - i_load_amp, i_load_ang: 负荷电流幅值和角度
+    - dir_val: 故障方向 (0=正向, 1=反向)
+    - i_f_amp: 设定的短路电流幅值
+    - z_mag, z_ang: 设定的线路阻抗幅值和角度
+    - formula: 零序补偿公式 (0=直接, 1=分量Kr/Kx, 2=阻抗比)
+    - kl_params: 包含补偿系数的字典
+    - ct_val: CT极性 (0=指向线路, 1=指向母线)
+    
+    返回:
+    - (V_A, V_B, V_C), (I_A, I_B, I_C), Z_loop
+    """
+    # 1. 定义三相的基准相角
+    phase_shifts = [0.0, -120.0, 120.0]
+    
+    # 构建系统三相额定电压
+    E_sys = [to_complex(sys_v, shift) for shift in phase_shifts]
+    
+    # 构建三相对称负荷电流
+    I_load = [to_complex(i_load_amp, i_load_ang + shift) for shift in phase_shifts]
+    
+    # 线路阻抗 Z_line
+    Z_line = to_complex(z_mag, z_ang)
+    R_line, X_line = Z_line.real, Z_line.imag
+
+    # 2. 计算等效回路阻抗 Z_loop
+    KL_actual = complex(0, 0)
+    if formula == 1:
+        # 公式1：分量法
+        kr = kl_params.get('kr', 0.0)
+        kx = kl_params.get('kx', 0.0)
+        Z_loop = complex((1.0 + kr) * R_line, (1.0 + kx) * X_line)
+    else:
+        # 公式0和2：复数法
+        if formula == 0:
+            KL_actual = to_complex(kl_params.get('kl_amp', 0.0), kl_params.get('kl_ang', 0.0))
+        elif formula == 2:
+            z0z1_ratio = to_complex(kl_params.get('z0z1_amp', 1.0), kl_params.get('z0z1_ang', 0.0))
+            KL_actual = (z0z1_ratio - 1.0) / 3.0
+        Z_loop = Z_line * (1.0 + KL_actual)
+
+    # 3. 计算正向纯故障电流分量 (相位锚定)
+    z_loop_mag, z_loop_ang = to_polar_deg(Z_loop)
+    fault_phase_base_ang = phase_shifts[ft]
+    # 短路电流相角 = 故障相基准相角 - 回路阻抗角
+    i_f_fwd_ang = fault_phase_base_ang - z_loop_ang
+    I_f_fwd = to_complex(i_f_amp, i_f_fwd_ang)
+
+    # 4. 计算纯数学的正反向实际故障电流分量
+    if dir_val == 0:
+        I_f_actual = I_f_fwd
+    else:
+        I_f_actual = -I_f_fwd # 反向故障翻转180度
+
+    # 5. 初始化输出数组 (先让三相都等于稳态值)
+    V_out = list(E_sys)
+    I_out = list(I_load)
+
+    # 6. 对故障相(ft)进行相量更新叠加
+    # 电压叠加：始终使用正向模型 (负载压降 + 短路压降)
+    V_out[ft] = I_load[ft] * Z_line + I_f_fwd * Z_loop
+    # 电流叠加：负载电流 + 实际短路分量
+    I_out[ft] = I_load[ft] + I_f_actual
+
+    # 7. CT 极性修正 (如果CT指向母线，所有电流输出集体翻转)
+    if ct_val == 1:
+        I_out = [-i for i in I_out]
+
+    return tuple(V_out), tuple(I_out), Z_loop
+
+# ==========================================
+# 3. Streamlit 交互与界面逻辑
+# ==========================================
+def main():
+    st.set_page_config(page_title="线路保护计算引擎", layout="wide")
+    st.title("⚡ 线路保护短路相量计算引擎 (ABC相完整版)")
+    st.markdown("将底层数学计算封装为标准函数，支持任意单相接地故障及商用边界条件映射。")
+
+    # --- 侧边栏：参数收集 ---
+    st.sidebar.header("1. 系统与负荷")
+    sys_v = st.sidebar.number_input("系统相电压 Vnom (V)", value=57.735, step=1.0)
+    i_load_amp = st.sidebar.number_input("负荷电流幅值 (A)", value=0.0, step=0.1)
+    i_load_ang = st.sidebar.number_input("负荷电流角度 (°)", value=0.0, step=1.0)
+
+    st.sidebar.header("2. 故障设定 (单相接地)")
+    # 新增：故障相选择
+    fault_phase_str = st.sidebar.selectbox("故障相", options=["A相接地", "B相接地", "C相接地"])
+    ft_map = {"A相接地": 0, "B相接地": 1, "C相接地": 2}
+    ft = ft_map[fault_phase_str]
+
+    dir_val = st.sidebar.radio("故障方向", options=[0, 1], format_func=lambda x: "0: 正向" if x==0 else "1: 反向")
+    i_val = st.sidebar.number_input("短路电流 If (A)", value=5.0, step=0.1)
+    z_val = st.sidebar.number_input("测试阻抗 Z (Ω)", value=2.0, step=0.1)
+    ang_val = st.sidebar.number_input("阻抗角 Z_ang (°)", value=75.0, step=1.0)
+
+    st.sidebar.header("3. 零序补偿 (KL)")
+    formula = st.sidebar.radio("计算公式", options=[0, 1, 2], 
+                               format_func=lambda x: ["0: 直接给定 KL", "1: 分量法 (Kr, Kx)", "2: 阻抗比法 (Z0/Z1)"][x])
+
+    # 打包补偿参数
+    kl_params = {}
+    if formula == 0:
+        kl_params['kl_amp'] = st.sidebar.number_input("KL 幅值", value=0.667, step=0.01)
+        kl_params['kl_ang'] = st.sidebar.number_input("KL 角度 (°)", value=0.0, step=1.0)
+    elif formula == 1:
+        kl_params['kr'] = st.sidebar.number_input("Kr", value=0.2, step=0.01) 
+        kl_params['kx'] = st.sidebar.number_input("Kx", value=0.8, step=0.01) 
+    elif formula == 2:
+        kl_params['z0z1_amp'] = st.sidebar.number_input("Z0/Z1 幅值", value=3.0, step=0.1)
+        kl_params['z0z1_ang'] = st.sidebar.number_input("Z0/Z1 角度 (°)", value=0.0, step=1.0)
+
+    st.sidebar.header("4. 硬件控制")
+    ct_val = st.sidebar.radio("CT极性", options=[0, 1], format_func=lambda x: "0: 指向线路" if x==0 else "1: 指向母线")
+
+    # --- 调用核心计算函数 ---
+    V_out, I_out, Z_loop = calculate_single_phase_fault(
+        ft=ft, sys_v=sys_v, i_load_amp=i_load_amp, i_load_ang=i_load_ang,
+        dir_val=dir_val, i_f_amp=i_val, z_mag=z_val, z_ang=ang_val,
+        formula=formula, kl_params=kl_params, ct_val=ct_val
+    )
+
+    V_A, V_B, V_C = V_out
+    I_A, I_B, I_C = I_out
+
+    # --- 结果展示格式化 ---
+    def format_out(c):
+        mag, ang = to_polar_deg(c)
+        return f"**{mag:7.3f}**", f"{ang:7.2f}°"
+
+    phase_name = ["A", "B", "C"][ft]
+    st.info(f"💡 **当前计算状态**: 测试 **{phase_name}相** 单相接地故障。等效回路阻抗 $Z_{{loop}}$ = **{to_polar_deg(Z_loop)[0]:.3f} Ω ∠ {to_polar_deg(Z_loop)[1]:.2f}°**")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("⚡ 硬件通道: 电压相量 (V)")
+        st.markdown(f"- **Va:** 幅值 {format_out(V_A)[0]} V, 角度 {format_out(V_A)[1]}")
+        st.markdown(f"- **Vb:** 幅值 {format_out(V_B)[0]} V, 角度 {format_out(V_B)[1]}")
+        st.markdown(f"- **Vc:** 幅值 {format_out(V_C)[0]} V, 角度 {format_out(V_C)[1]}")
+
+    with col2:
+        st.subheader("🔌 硬件通道: 电流相量 (A)")
+        st.markdown(f"- **Ia:** 幅值 {format_out(I_A)[0]} A, 角度 {format_out(I_A)[1]}")
+        st.markdown(f"- **Ib:** 幅值 {format_out(I_B)[0]} A, 角度 {format_out(I_B)[1]}")
+        st.markdown(f"- **Ic:** 幅值 {format_out(I_C)[0]} A, 角度 {format_out(I_C)[1]}")
+
+    st.divider()
+
+    # --- 闭环验证显示区 ---
+    st.subheader("🔍 保护装置视角校验")
+    st.write("我们假设保护装置此时读取了硬件输出的电压电流，并代入了常规阻抗方程：")
+    
+    # 提取故障相的V和I
+    V_fault = V_out[ft]
+    I_fault = I_out[ft]
+    
+    # 提取零序电流 (三相电流矢量和)
+    I_0_3 = I_A + I_B + I_C 
+    
+    try:
+        if formula != 1:
+            # 根据复数公式，推导保护装置测量到的阻抗
+            KL_actual = (to_complex(kl_params['z0z1_amp'], kl_params['z0z1_ang']) - 1.0)/3.0 if formula == 2 else to_complex(kl_params['kl_amp'], kl_params['kl_ang'])
+            
+            # 标准阻抗元件计算公式: Z = U / (I + 3I0 * KL)
+            Z_relay = V_fault / (I_fault + I_0_3 * KL_actual)
+            mag, ang = to_polar_deg(Z_relay)
+            
+            st.success(f"保护装置测得 **{phase_name}相** 阻抗 $\\vec{{Z}}_{{seen}}$ ≈ **{mag:.3f} Ω ∠ {ang:.2f}°**")
+            
+            if dir_val == 1:
+                st.write("👉 提示：由于是**反向故障**，保护装置测得的相角在第三象限 (与设定阻抗角相差180°)，方向元件将正确判定为反向！")
+        else:
+            st.info("分量法的校验方程依赖各自厂家的特殊分离方式，纯相量代数推导已在底层保证准确。")
+    except Exception as e:
+        st.error("校验计算中发生除以0或其他错误。")
+
+if __name__ == '__main__':
+    main()

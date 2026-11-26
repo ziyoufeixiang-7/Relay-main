@@ -1,0 +1,681 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ============================================================
+#  树莓派5 一键初始化脚本
+#  适用系统: Raspberry Pi OS Bookworm (headless / Lite)
+#  用法: sudo bash init.sh
+# ============================================================
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+CONFIG_FILE="/boot/firmware/config.txt"
+CMDLINE_FILE="/boot/firmware/cmdline.txt"
+SERVER_URL="http://47.98.48.17/update/relay12"
+INSTALL_DIR="/opt/RelayProtection"
+
+# --- 颜色输出 ---
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+info()  { echo -e "${GREEN}[✓]${NC} $1"; }
+warn()  { echo -e "${YELLOW}[!]${NC} $1"; }
+error() { echo -e "${RED}[✗]${NC} $1"; }
+step()  { echo -e "\n${CYAN}=== $1 ===${NC}"; }
+
+# 确认函数：回车继续，n 跳过。返回 0=执行，1=跳过
+confirm() {
+    local prompt="$1"
+    read -rp "$(echo -e "${YELLOW}$prompt [Y/n]:${NC} ")" choice
+    case "$choice" in
+        n|N) info "已跳过"; return 1 ;;
+        *)   return 0 ;;
+    esac
+}
+
+# --- 权限检查 ---
+if [ "$EUID" -ne 0 ]; then
+    error "请使用 sudo 运行此脚本: sudo bash $0"
+    exit 1
+fi
+
+REAL_USER="${SUDO_USER:-pi}"
+REAL_UID="$(id -u "$REAL_USER" 2>/dev/null || echo 1000)"
+REAL_GID="$(id -g "$REAL_USER" 2>/dev/null || echo 1000)"
+
+echo ""
+echo "============================================"
+echo "  继电保护测试系统 — 树莓派初始化"
+echo "============================================"
+echo ""
+
+# ============================================================
+# 模块 1: 屏幕选择
+# ============================================================
+step "模块 1/8: 屏幕选择"
+
+echo "请选择屏幕类型："
+echo "  1) Waveshare 7.0寸 H型 DSI0"
+echo "  2) Waveshare 10.1寸 DSI0"
+echo "  3) Waveshare 10.1寸 V2 DSI0（需旋转90°）"
+echo ""
+read -rp "请输入编号 [1/2/3] (默认 1): " SCREEN_CHOICE
+SCREEN_CHOICE="${SCREEN_CHOICE:-1}"
+
+case "$SCREEN_CHOICE" in
+    1) SCREEN_OVERLAY="dtoverlay=vc4-kms-dsi-waveshare-panel,7_0_inchH,dsi0"
+       SCREEN_NAME="7.0寸 H型"
+       NEED_ROTATE=false ;;
+    2) SCREEN_OVERLAY="dtoverlay=vc4-kms-dsi-waveshare-panel,10_1_inch,dsi0"
+       SCREEN_NAME="10.1寸"
+       NEED_ROTATE=false ;;
+    3) SCREEN_OVERLAY="dtoverlay=vc4-kms-dsi-waveshare-panel-v2,10_1_inch_a,dsi0"
+       SCREEN_NAME="10.1寸 V2（旋转90°）"
+       NEED_ROTATE=true ;;
+    *) error "无效选择，退出"; exit 1 ;;
+esac
+
+info "选择屏幕: $SCREEN_NAME"
+
+# 备份 config.txt
+if [ ! -f "${CONFIG_FILE}.bak-init" ]; then
+    cp "$CONFIG_FILE" "${CONFIG_FILE}.bak-init"
+    info "已备份 config.txt"
+fi
+
+# 清理旧的屏幕 dtoverlay（避免冲突）
+sed -i '/dtoverlay=vc4-kms-dsi-waveshare-panel/d' "$CONFIG_FILE"
+
+# 确保 vc4-kms-v3d 存在
+if ! grep -q "^dtoverlay=vc4-kms-v3d" "$CONFIG_FILE"; then
+    echo "dtoverlay=vc4-kms-v3d" >> "$CONFIG_FILE"
+fi
+
+# 写入屏幕配置
+cat >> "$CONFIG_FILE" << EOF
+
+# 继电保护系统 — 屏幕配置 ($SCREEN_NAME)
+$SCREEN_OVERLAY
+EOF
+
+info "屏幕配置已写入 config.txt"
+
+# ============================================================
+# 模块 2: 串口配置
+# ============================================================
+step "模块 2/8: 串口配置"
+
+if confirm "配置串口（uart0 + 关闭控制台输出）？"; then
+
+# 添加 uart0=on
+if ! grep -q "^dtparam=uart0=on" "$CONFIG_FILE"; then
+    echo "" >> "$CONFIG_FILE"
+    echo "# 启用硬件串口 uart0（FPGA 通信）" >> "$CONFIG_FILE"
+    echo "dtparam=uart0=on" >> "$CONFIG_FILE"
+    info "已添加 dtparam=uart0=on"
+else
+    info "串口配置已存在，跳过"
+fi
+
+# 关闭串口控制台
+if [ -f "$CMDLINE_FILE" ]; then
+    if grep -qE "console=(serial0|ttyAMA0),[0-9]+" "$CMDLINE_FILE"; then
+        if [ ! -f "${CMDLINE_FILE}.bak-init" ]; then
+            cp "$CMDLINE_FILE" "${CMDLINE_FILE}.bak-init"
+        fi
+        sed -i -E 's/console=(serial0|ttyAMA0),[0-9]+ *//g' "$CMDLINE_FILE"
+        info "已从 cmdline.txt 移除串口控制台"
+    else
+        info "串口控制台已关闭"
+    fi
+fi
+
+fi  # end confirm 模块 2
+
+# ============================================================
+# 模块 3: 静默启动 + APT 镜像
+# ============================================================
+step "模块 3/8: 静默启动 + APT 镜像"
+
+if confirm "配置静默启动（隐藏启动日志）+ 切换清华 APT 源？"; then
+
+# config.txt: 禁用彩虹屏 + 减少延迟
+if ! grep -q "^disable_splash=1" "$CONFIG_FILE"; then
+    echo "disable_splash=1" >> "$CONFIG_FILE"
+fi
+if ! grep -q "^boot_delay=0" "$CONFIG_FILE"; then
+    echo "boot_delay=0" >> "$CONFIG_FILE"
+fi
+# 禁用 HDMI 热插拔（使用 DSI 屏）
+if ! grep -q "^hdmi_ignore_hotplug=1" "$CONFIG_FILE"; then
+    echo "hdmi_ignore_hotplug=1" >> "$CONFIG_FILE"
+fi
+
+# cmdline.txt: 静默启动 + 隐藏光标
+# 注意: console= 必须保持 tty1！console 指向的 VT 会在启动结束后占据屏幕，
+# 改成其他 tty 会导致 kiosk(tty1) 的画面显示不出来。
+# 静默靠 quiet + loglevel=0 实现（内核消息只剩紧急级别，屏幕不会有输出）。
+CMDLINE_CONTENT=$(cat "$CMDLINE_FILE")
+
+# consoleblank=0: 关闭 VT 屏幕休眠（仪器屏需常亮，避免被误当死机）
+for opt in "quiet" "loglevel=0" "vt.global_cursor_default=0" "consoleblank=0"; do
+    if ! echo "$CMDLINE_CONTENT" | grep -q "$opt"; then
+        CMDLINE_CONTENT="$CMDLINE_CONTENT $opt"
+    fi
+done
+
+echo "$CMDLINE_CONTENT" > "$CMDLINE_FILE"
+
+# 自动检测并切换 APT 源到清华镜像（动态适配各种版本和 DEB822 格式）
+# 备份放到 sources.list.d 之外——放在里面 apt 每次运行都会打印 "N: Ignoring file" 提示
+mkdir -p /etc/apt/backup-init
+for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+    if [ -f "$f" ]; then
+        if ! grep -q "tuna.tsinghua.edu.cn" "$f" 2>/dev/null; then
+            cp "$f" "/etc/apt/backup-init/$(basename "$f")" 2>/dev/null || true
+            sed -i 's|http://deb.debian.org/debian|https://mirrors.tuna.tsinghua.edu.cn/debian|g' "$f"
+            sed -i 's|http://security.debian.org/debian-security|https://mirrors.tuna.tsinghua.edu.cn/debian-security|g' "$f"
+            sed -i 's|http://archive.raspberrypi.com/debian|https://mirrors.tuna.tsinghua.edu.cn/raspberrypi|g' "$f"
+            sed -i 's|http://archive.raspberrypi.org/debian|https://mirrors.tuna.tsinghua.edu.cn/raspberrypi|g' "$f"
+        fi
+    fi
+done
+info "APT 源已动态切换为清华镜像"
+
+# 联网步骤非致命：失败仅告警继续，不让 set -e 中断整个初始化（留下半套配置）
+apt-get update -qq || warn "APT 更新失败（离线？继续执行）"
+
+info "静默启动已配置（无动画，黑屏直达界面）"
+
+fi  # end confirm 模块 3
+
+# ============================================================
+# 模块 4: WiFi 权限配置
+# ============================================================
+step "模块 4/8: WiFi 权限配置"
+
+if confirm "配置 WiFi 管理权限（让后端程序能控制 WiFi）？"; then
+
+# 确保 NetworkManager 启用
+systemctl enable NetworkManager 2>/dev/null || true
+info "NetworkManager 已启用"
+
+# 添加 pi 到 netdev 组（NetworkManager 默认允许 netdev 组管理网络）
+usermod -aG netdev "$REAL_USER" 2>/dev/null || true
+info "已将 $REAL_USER 添加到 netdev 组"
+
+# 配置 polkit 规则：允许 pi 用户免授权使用 nmcli 管理 WiFi
+# Bookworm 使用新版 polkit（JavaScript 规则引擎）
+POLKIT_RULES_DIR="/etc/polkit-1/rules.d"
+mkdir -p "$POLKIT_RULES_DIR"
+
+cat > "$POLKIT_RULES_DIR/10-network-manager.rules" << POLKIT_EOF
+polkit.addRule(function(action, subject) {
+    if (action.id.indexOf("org.freedesktop.NetworkManager.") === 0 &&
+        subject.user === "$REAL_USER") {
+        return polkit.Result.YES;
+    }
+});
+POLKIT_EOF
+
+info "polkit 规则已配置（$REAL_USER 用户可免授权控制 WiFi）"
+
+# 验证 nmcli 可用
+if command -v nmcli &>/dev/null; then
+    info "nmcli 可用: $(nmcli --version)"
+else
+    warn "nmcli 未找到，请确认 network-manager 已安装"
+fi
+
+fi  # end confirm 模块 4
+
+
+# ============================================================
+# 模块 5: 下载并部署后端程序
+# ============================================================
+step "模块 5/8: 下载并部署后端程序"
+
+DOWNLOAD_SUCCESS=false
+
+if confirm "从服务器下载并部署后端程序？"; then
+
+# 检测网络连接
+if ping -c 1 -W 3 47.98.48.17 &>/dev/null; then
+    info "网络连接正常，开始下载..."
+
+    VERSION_JSON=$(curl -sf --connect-timeout 10 --max-time 15 "${SERVER_URL}/version.json" 2>/dev/null || echo "")
+
+    if [ -n "$VERSION_JSON" ]; then
+        DL_URL=$(echo "$VERSION_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('url',''))" 2>/dev/null || echo "")
+        DL_SHA=$(echo "$VERSION_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('sha256',''))" 2>/dev/null || echo "")
+        DL_VER=$(echo "$VERSION_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('version','?'))" 2>/dev/null || echo "?")
+
+        if [ -n "$DL_URL" ]; then
+            info "最新版本: v${DL_VER}"
+            echo "下载中..."
+
+            TMP_FILE="/tmp/relay-update-$$.tar.gz"
+            if curl -f --progress-bar -o "$TMP_FILE" "$DL_URL"; then
+                # SHA-256 校验
+                if [ -n "$DL_SHA" ]; then
+                    ACTUAL_SHA=$(sha256sum "$TMP_FILE" | cut -d' ' -f1)
+                    if [ "$ACTUAL_SHA" != "$DL_SHA" ]; then
+                        error "SHA-256 校验失败！文件可能已损坏"
+                        rm -f "$TMP_FILE"
+                    else
+                        info "SHA-256 校验通过"
+                        DOWNLOAD_SUCCESS=true
+                    fi
+                else
+                    warn "服务器未提供 SHA-256，跳过校验"
+                    DOWNLOAD_SUCCESS=true
+                fi
+
+                if [ "$DOWNLOAD_SUCCESS" = true ]; then
+                    mkdir -p "$INSTALL_DIR"
+                    tar -xzf "$TMP_FILE" -C "$INSTALL_DIR/"
+                    chown -R "$REAL_USER:$REAL_USER" "$INSTALL_DIR"
+                    chmod +x "$INSTALL_DIR/SysEngine.bin" 2>/dev/null || true
+                    rm -f "$TMP_FILE"
+                    info "后端程序已安装到 $INSTALL_DIR (v${DL_VER})"
+
+                    # 首次部署：写入默认校准参数（已有则不覆盖，保护设备实测数据）
+                    if [ ! -f "$INSTALL_DIR/config/calibration.json" ]; then
+                        mkdir -p "$INSTALL_DIR/config"
+                        if [ -f "$SCRIPT_DIR/config/calibration.json" ]; then
+                            cp "$SCRIPT_DIR/config/calibration.json" "$INSTALL_DIR/config/calibration.json"
+                            chown "$REAL_USER:$REAL_USER" "$INSTALL_DIR/config/calibration.json"
+                            info "已写入默认校准参数（calibration.json）"
+                        else
+                            warn "初始化包中无默认 calibration.json，校准前后端可能报错"
+                        fi
+                    else
+                        info "校准参数已存在，保留当前设备数据"
+                    fi
+                fi
+            else
+                error "下载失败"
+            fi
+        fi
+    else
+        warn "无法获取服务器版本信息"
+    fi
+else
+    warn "无网络连接，跳过下载（可稍后使用 OTA 更新或 USB 安装）"
+fi
+
+fi  # end confirm 模块 5 (下载部分)
+
+# 安装 systemd 服务
+cp "$SCRIPT_DIR/relay-protection.service" /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable relay-protection
+info "后端服务已设置为开机自启"
+
+# 配置 sudoers
+cat > /etc/sudoers.d/relay-protection << SUDOERS_EOF
+$REAL_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart relay-protection, /usr/bin/systemctl stop relay-protection, /usr/bin/systemctl start relay-protection
+$REAL_USER ALL=(ALL) NOPASSWD: /usr/bin/python3 /opt/RelayProtection/updater.py *
+$REAL_USER ALL=(ALL) NOPASSWD: /usr/bin/mount, /usr/bin/umount
+SUDOERS_EOF
+chmod 440 /etc/sudoers.d/relay-protection
+# 校验 sudoers 语法，损坏则立即删除（防止把 sudo 搞坏）
+if ! visudo -cf /etc/sudoers.d/relay-protection &>/dev/null; then
+    rm -f /etc/sudoers.d/relay-protection
+    warn "sudoers 语法校验失败，已移除该文件"
+else
+    info "sudoers 权限已配置"
+fi
+
+# --- USB 自动挂载（必装，U盘离线更新依赖此功能） ---
+# 注意：不能在 udev RUN 里直接 mount —— systemd-udevd 运行在私有挂载
+# 命名空间（PrivateMounts），挂载对系统不可见。必须由 udev 触发
+# systemd 服务，让挂载发生在主命名空间。
+cat > /usr/local/bin/usb-automount.sh << 'USBMOUNT_EOF'
+#!/bin/bash
+PART="$1"
+[ -b "/dev/$PART" ] || exit 0
+LABEL=$(lsblk -no LABEL "/dev/$PART" 2>/dev/null | head -n1 | tr -d ' ')
+MOUNT_DIR="/media/pi/${LABEL:-$PART}"
+mkdir -p "$MOUNT_DIR"
+mount -o uid=1000,gid=1000,utf8 "/dev/$PART" "$MOUNT_DIR" 2>/dev/null \
+    || mount "/dev/$PART" "$MOUNT_DIR"
+USBMOUNT_EOF
+chmod +x /usr/local/bin/usb-automount.sh
+
+cat > /usr/local/bin/usb-autoumount.sh << 'USBUMOUNT_EOF'
+#!/bin/bash
+PART="$1"
+[ -n "$PART" ] && umount -l "/dev/$PART" 2>/dev/null
+for d in /media/pi/*/; do
+    mountpoint -q "$d" || rmdir "$d" 2>/dev/null
+done
+exit 0
+USBUMOUNT_EOF
+chmod +x /usr/local/bin/usb-autoumount.sh
+
+# 适配非 pi 用户：把脚本里的 /media/pi 与 uid=1000,gid=1000 替换为实际用户（pi/1000 时为无操作）
+sed -i "s#/media/pi#/media/$REAL_USER#g; s/uid=1000,gid=1000/uid=$REAL_UID,gid=$REAL_GID/g" \
+    /usr/local/bin/usb-automount.sh /usr/local/bin/usb-autoumount.sh
+
+cat > /etc/systemd/system/usb-mount@.service << 'USBSVC_EOF'
+[Unit]
+Description=USB automount for /dev/%i
+
+[Service]
+Type=oneshot
+RemainAfterExit=true
+ExecStart=/usr/local/bin/usb-automount.sh %i
+ExecStop=/usr/local/bin/usb-autoumount.sh %i
+USBSVC_EOF
+
+cat > /etc/udev/rules.d/99-usb-automount.rules << 'UDEV_EOF'
+ACTION=="add", SUBSYSTEM=="block", KERNEL=="sd[a-z]*", ENV{ID_FS_USAGE}=="filesystem", RUN+="/usr/bin/systemctl --no-block start usb-mount@%k.service"
+ACTION=="remove", SUBSYSTEM=="block", KERNEL=="sd[a-z]*", RUN+="/usr/bin/systemctl --no-block stop usb-mount@%k.service"
+UDEV_EOF
+
+systemctl daemon-reload
+udevadm control --reload-rules 2>/dev/null || true
+udevadm trigger --subsystem-match=block 2>/dev/null || true
+info "USB 自动挂载已配置（udev + systemd）"
+
+# ============================================================
+# 模块 5+: FPGA 烧录工具安装
+#   安装 xc3sprog + 运行依赖到 /opt/FPGADownload/
+#   后续 FPGA 固件更新由后端程序通过 OTA 处理
+# ============================================================
+step "模块 5+: FPGA 烧录工具安装"
+
+if confirm "安装 FPGA 烧录工具（xc3sprog）到 /opt/FPGADownload/ ？"; then
+
+FPGA_INSTALL_DIR="/opt/FPGADownload"
+FPGA_SRC="$SCRIPT_DIR/../FPGADownload/xc3sprog"
+
+if [ ! -f "$FPGA_SRC" ]; then
+    error "FPGADownload/xc3sprog 不存在，请确认初始化 TF 卡内容完整"
+else
+    # 安装 libftdi（xc3sprog 运行时依赖）
+    if ! ldconfig -p 2>/dev/null | grep -q libftdi; then
+        info "安装 libftdi ..."
+        apt-get install -y --no-install-recommends libftdi-dev || warn "libftdi 安装失败"
+    else
+        info "libftdi 已安装"
+    fi
+
+    # 安装 xc3sprog
+    mkdir -p "$FPGA_INSTALL_DIR"
+    cp "$FPGA_SRC" "$FPGA_INSTALL_DIR/xc3sprog"
+    chmod +x "$FPGA_INSTALL_DIR/xc3sprog"
+    info "xc3sprog 已安装到 $FPGA_INSTALL_DIR/"
+fi
+
+else
+    info "跳过 FPGA 工具安装"
+fi
+
+
+# ============================================================
+# 模块 6: Kiosk 浏览器
+# ============================================================
+step "模块 6/8: Kiosk 浏览器"
+
+if confirm "安装并配置 Kiosk 浏览器（sway + Chromium）？"; then
+
+# 安装 Wayland 合成器 sway + Chromium + 思源黑体
+# 选型: Wayland(sway) 而非 X11 ——
+#   ① 1GB 内存: sway 本体 ~15MB；Xorg+窗口管理器 ~60-100MB
+#   ② 性能: Chromium 原生 Wayland 直接走 KMS/GPU 合成，
+#      与树莓派官方桌面(labwc/Wayland)同一条 vc4/v3d 优化主线
+#   ③ 全屏/光标隐藏/触摸 都是原生配置，无需 X11 的 matchbox/-nocursor 等补丁
+apt-get install -y --no-install-recommends sway chromium fonts-noto-cjk \
+    || warn "Kiosk 组件安装失败（离线？）—— 配置文件仍会写入，联网后补装即可"
+info "sway + Chromium + 思源黑体 已安装"
+
+# 界面字体选择（MiSans 为小米官方免费商用字体，从更新服务器现场下载）
+echo ""
+echo "请选择界面字体："
+echo "  1) MiSans 小米字体（默认，约 24MB 从更新服务器下载）"
+echo "  2) 思源黑体（系统自带，无需下载）"
+read -rp "请输入编号 [1/2] (默认 1): " FONT_CHOICE
+FONT_CHOICE="${FONT_CHOICE:-1}"
+
+FONT_DIR="/usr/share/fonts/truetype/relay-custom"
+FONTS_URL="${SERVER_URL%/*}/fonts"   # http://47.98.48.17/update/fonts（各机型共用）
+mkdir -p "$FONT_DIR"
+
+# 自备字体（可选）: deploy/fonts/ 下的 ttf/ttc/otf 一并安装
+find "$SCRIPT_DIR/fonts" -maxdepth 1 -type f \
+    \( -name '*.ttf' -o -name '*.ttc' -o -name '*.otf' \) \
+    -exec cp -t "$FONT_DIR/" {} + 2>/dev/null || true
+
+if [ "$FONT_CHOICE" = "1" ]; then
+    for f in MiSans-Regular.ttf MiSans-Medium.ttf MiSans-Bold.ttf; do
+        [ -f "$FONT_DIR/$f" ] && continue
+        if curl -fsSL --connect-timeout 10 -o "$FONT_DIR/$f.tmp" "$FONTS_URL/MiSans/$f"; then
+            mv "$FONT_DIR/$f.tmp" "$FONT_DIR/$f"
+        else
+            rm -f "$FONT_DIR/$f.tmp"
+            warn "MiSans 下载失败（离线？），回退思源黑体"
+            break
+        fi
+    done
+fi
+
+if [ -n "$(ls -A "$FONT_DIR" 2>/dev/null)" ]; then
+    # 默认无衬线字体优先级：装了哪个用哪个，最后回退思源黑体
+    cat > /etc/fonts/local.conf << 'FONT_EOF'
+<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+<fontconfig>
+  <alias>
+    <family>sans-serif</family>
+    <prefer>
+      <family>MiSans</family>
+      <family>HarmonyOS Sans SC</family>
+      <family>Alibaba PuHuiTi 3.0</family>
+      <family>Microsoft YaHei</family>
+      <family>Noto Sans CJK SC</family>
+    </prefer>
+  </alias>
+</fontconfig>
+FONT_EOF
+    fc-cache -f >/dev/null 2>&1 || true
+    info "界面字体: $(fc-match --format '%{family}' sans-serif 2>/dev/null || echo 自定义字体)"
+else
+    rmdir "$FONT_DIR" 2>/dev/null || true
+    rm -f /etc/fonts/local.conf
+    info "界面字体: 思源黑体"
+fi
+
+# 6a. 配置 tty1 自动登录（免密码）及静默登录界面
+mkdir -p /etc/systemd/system/getty@tty1.service.d/
+cat > /etc/systemd/system/getty@tty1.service.d/autologin.conf << AUTOLOGIN_EOF
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty --autologin $REAL_USER --noclear --noissue %I \$TERM
+AUTOLOGIN_EOF
+# 创建 .hushlogin 彻底隐藏登录后的 Linux 欢迎信息 (MOTD)
+touch "/home/$REAL_USER/.hushlogin"
+chown "$REAL_USER:$REAL_USER" "/home/$REAL_USER/.hushlogin"
+info "tty1 自动登录已配置（静默登录）"
+
+# 6b. 生成 sway 配置
+# Chromium 参数（含低内存优化）:
+#   --ozone-platform=wayland       原生 Wayland 运行（不经 XWayland）
+#   --disable-component-update / --disable-background-networking / --disable-sync
+#   / --metrics-recording-only     关掉后台组件更新/上报等无用的网络与内存开销
+#   --disable-pinch                禁用双指捏合缩放（kiosk 不允许用户缩放）
+#   注意: 不要加 --enable-low-end-device-mode —— 它会把渲染降到 RGB565
+#   16位色，UI 颜色断层（2026-06-11 实机踩过）；内存压力交给 zram 解决
+CHROMIUM_ARGS="--kiosk --incognito --ozone-platform=wayland --disable-pinch --disable-component-update --disable-background-networking --disable-sync --metrics-recording-only --noerrdialogs --disable-infobars --no-first-run --disable-session-crashed-bubble --autoplay-policy=no-user-gesture-required --check-for-update-interval=31536000 --disable-features=Translate"
+
+if [ "$NEED_ROTATE" = true ]; then
+    ROTATE_LINE="output * transform 90"
+else
+    ROTATE_LINE="# 屏幕无需旋转"
+fi
+
+SWAY_DIR="/home/$REAL_USER/.config/sway"
+mkdir -p "$SWAY_DIR"
+cat > "$SWAY_DIR/config" << SWAY_EOF
+# 继电保护 kiosk（sway Wayland 合成器）
+# transform 同时旋转显示和触摸坐标，无需单独校准触摸
+$ROTATE_LINE
+
+# 光标空闲 2 秒自动隐藏（sway 原生配置；触摸不会唤醒光标，插鼠标调试时移动可唤醒）
+seat * hide_cursor 2000
+
+# 无边框
+default_border none
+
+# 不启动 XWayland（Chromium 是原生 Wayland 客户端，省 ~20MB 内存）
+xwayland disable
+
+# 浏览器退出则退出 sway -> tty1 重新自动登录再拉起 = 崩溃自恢复
+# sleep 5: 浏览器秒崩时限速重启循环，避免热循环占满 CPU
+exec 'chromium $CHROMIUM_ARGS file:///opt/RelayProtection/index.html; sleep 5; swaymsg exit'
+SWAY_EOF
+chown -R "$REAL_USER:$REAL_USER" "/home/$REAL_USER/.config"
+
+# 6c. 写入 pi 用户的 .bash_profile（仅 tty1 触发）
+BASH_PROFILE="/home/$REAL_USER/.bash_profile"
+
+# 先移除旧的 kiosk 启动块（如果存在）
+sed -i '/# --- Kiosk Start ---/,/# --- Kiosk End ---/d' "$BASH_PROFILE" 2>/dev/null || true
+
+cat >> "$BASH_PROFILE" << 'KIOSK_EOF'
+# --- Kiosk Start ---
+if [ "$(tty)" = "/dev/tty1" ]; then
+    # tty 自动登录的 bash 不经图形会话，pam_systemd 未设好 XDG_RUNTIME_DIR，
+    # 否则 sway 启动会打印红色 "XDG_RUNTIME_DIR is not set" 报错。
+    export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+    [ -d "$XDG_RUNTIME_DIR" ] || { mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"; }
+    exec sway >/dev/null 2>&1
+fi
+# --- Kiosk End ---
+KIOSK_EOF
+
+chown "$REAL_USER:$REAL_USER" "$BASH_PROFILE"
+info "Kiosk 浏览器已配置（tty1 自动登录 → sway → Chromium 全屏）"
+
+fi  # end confirm 模块 6
+
+# ============================================================
+# 模块 7: 系统精简
+# ============================================================
+step "模块 7/8: 系统精简 + 可靠性加固"
+
+if confirm "精简系统 + 可靠性加固（禁用无用服务 / 看门狗 / 日志入 RAM）？"; then
+
+# 禁用不需要的服务
+SERVICES_TO_DISABLE=(
+    "systemd-networkd-wait-online.service"  # 等待网络（拖慢开机）
+    "ModemManager.service"                   # 调制解调器
+    "triggerhappy.service"                   # 全局快捷键守护（kiosk 用不到）
+)
+
+for svc in "${SERVICES_TO_DISABLE[@]}"; do
+    if systemctl is-enabled "$svc" &>/dev/null; then
+        systemctl disable --now "$svc" 2>/dev/null || true
+        info "已禁用: $svc"
+    fi
+done
+
+# 屏蔽云服务初始化
+for svc in cloud-init.service cloud-init-local.service cloud-config.service cloud-final.service; do
+    systemctl mask "$svc" 2>/dev/null || true
+done
+info "已屏蔽云服务初始化"
+
+# 保留蓝牙 + NetworkManager
+
+# --- 硬件看门狗：系统卡死自动重启（无人值守可靠性关键） ---
+if ! grep -q "^dtparam=watchdog=on" "$CONFIG_FILE"; then
+    echo "dtparam=watchdog=on" >> "$CONFIG_FILE"
+fi
+mkdir -p /etc/systemd/system.conf.d
+cat > /etc/systemd/system.conf.d/watchdog.conf << 'WDT_EOF'
+[Manager]
+# systemd 每 ~7.5s 喂一次狗；卡死 15s 触发硬件复位
+RuntimeWatchdogSec=15
+RebootWatchdogSec=2min
+WDT_EOF
+info "硬件看门狗已配置（卡死自动重启）"
+
+# --- journald 日志写 RAM：保护 SD 卡（减少写入磨损）+ 防日志写满磁盘 ---
+mkdir -p /etc/systemd/journald.conf.d
+cat > /etc/systemd/journald.conf.d/volatile.conf << 'JOURNALD_EOF'
+[Journal]
+Storage=volatile
+RuntimeMaxUse=32M
+JOURNALD_EOF
+info "journald 日志已切换为 RAM 存储（保护 SD 卡）"
+
+# --- zram 压缩内存交换：1GB 内存设备关键优化 ---
+# 用 zstd 把 60% RAM 划作压缩交换区（压缩比约 2~3 倍，实际可多容纳数百 MB），
+# Chromium 在 1GB 上必然要换页——换进 zram 比换到 SD 卡快一个数量级且不磨卡
+apt-get install -y --no-install-recommends zram-tools || warn "zram-tools 安装失败，跳过"
+if [ -f /etc/default/zramswap ]; then
+    cat > /etc/default/zramswap << 'ZRAM_EOF'
+ALGO=zstd
+PERCENT=60
+ZRAM_EOF
+    systemctl enable zramswap 2>/dev/null || true
+    systemctl restart zramswap 2>/dev/null || true
+    info "zram 压缩交换已启用（zstd, 60% RAM）"
+fi
+# 停用 SD 卡上的传统 swapfile（慢且磨卡，被 zram 取代）
+systemctl disable --now dphys-swapfile 2>/dev/null || true
+# zram 场景提高 swappiness：压缩页换入换出成本低，尽早换出冷页给 Chromium 腾内存
+echo 'vm.swappiness=100' > /etc/sysctl.d/99-relay-zram.conf
+info "SD swapfile 已停用，swappiness=100（配合 zram）"
+
+fi  # end confirm 模块 7
+
+# ============================================================
+# 模块 8: 权限配置
+# ============================================================
+step "模块 8/8: 权限配置"
+
+if confirm "配置用户权限（gpio/dialout/sudoers）？"; then
+
+# 添加用户到必要的组
+for grp in gpio dialout plugdev video render input; do
+    usermod -aG "$grp" "$REAL_USER" 2>/dev/null || true
+done
+info "已将 $REAL_USER 添加到 gpio/dialout/plugdev/video/render/input 组"
+
+fi  # end confirm 模块 8
+
+# ============================================================
+# 完成
+# ============================================================
+sync   # 落盘所有 config.txt/cmdline.txt/服务文件，避免重启前掉电丢配置
+
+echo ""
+echo "============================================"
+echo -e "  ${GREEN}初始化完成！${NC}"
+echo "============================================"
+echo ""
+echo "配置摘要："
+echo "  屏幕:    $SCREEN_NAME"
+echo "  串口:    uart0=on, 控制台已关闭"
+echo "  启动:    静默启动（无动画）"
+echo "  后端:    $INSTALL_DIR (systemd: relay-protection)"
+echo "  前端:    Chromium kiosk (sway/Wayland, 光标自动隐藏, 屏常亮)"
+echo "  WiFi:    NetworkManager 已启用"
+echo "  FPGA:    xc3sprog 已安装（固件更新由后端 OTA 处理）"
+echo "  加固:    服务防雪崩 + 看门狗 + 日志入RAM + zram压缩交换"
+
+if [ "$DOWNLOAD_SUCCESS" = true ]; then
+    echo -e "  软件:    ${GREEN}v${DL_VER} 已安装${NC}"
+else
+    echo -e "  软件:    ${YELLOW}未下载（请稍后更新）${NC}"
+fi
+
+echo ""
+echo -e "${YELLOW}请运行以下命令重启使配置生效：${NC}"
+echo "  sudo reboot"
+echo ""

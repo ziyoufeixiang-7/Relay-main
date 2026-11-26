@@ -1,0 +1,8 @@
+{
+    "schemaVersion": 1,
+    "channelNumbering": "fpga",
+    "amplitudeConvention": "peak",
+    "interpolation": "linear_factor",
+    "outOfRangePolicy": "clamp_warn",
+    "channels": {}
+}
