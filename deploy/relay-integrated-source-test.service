@@ -1,0 +1,22 @@
+[Unit]
+Description=Integrated six-phase mobile backend TEST (Python source)
+After=network.target relay-mobile-network-test.service
+Conflicts=relay-protection.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/relay-integrated-test/current/app
+Environment=RELAY_MOBILE_CONTROL=1
+Environment=RELAY_TEST_DEVICE_CONFIG=/etc/relay-mobile-test/device.json
+Environment=RELAY_TEST_NETWORK_SOCKET=/run/relay-mobile-network-test/control.sock
+Environment=RELAY_MIRROR_NETWORK=1
+Environment=RELAY_FRONTEND_PATH=/opt/relay-integrated-test/current/index.html
+Environment=RELAY_INSTALL_DIR=/opt/relay-integrated-test/current/app
+ExecStart=/opt/relay-integrated-test/current/runtime/bin/python /opt/relay-integrated-test/current/app/SysEngine.py
+Restart=on-failure
+RestartSec=3
+OOMScoreAdjust=-888
+
+[Install]
+WantedBy=multi-user.target
