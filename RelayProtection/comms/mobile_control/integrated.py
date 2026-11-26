@@ -23,7 +23,7 @@ class _EngineEndpoint:
 
 
 class IntegratedGateway(Gateway):
-    PORT = 8181
+    PORT = 8080
 
     def __init__(self, *, require_enrollment=True, host='0.0.0.0', port=PORT):
         super().__init__(upstream=None, ui_mirror=True, independent_remote=True,

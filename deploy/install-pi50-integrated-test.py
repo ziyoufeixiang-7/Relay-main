@@ -17,7 +17,7 @@ def run(*args,check=True,env=None):
 def user(*args,check=True):return run(*USERCTL,*args,check=check)
 def digest(path):return hashlib.sha256(path.read_bytes()).hexdigest()
 def health():
-    with urllib.request.urlopen('http://127.0.0.1:8181/health',timeout=3) as r:return json.load(r)
+    with urllib.request.urlopen('http://127.0.0.1:8080/health',timeout=3) as r:return json.load(r)
 def wait_health():
     for _ in range(30):
         try:

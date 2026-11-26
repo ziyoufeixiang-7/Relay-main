@@ -8,7 +8,7 @@ if '--self-check' in sys.argv:
     # Compiled-artifact verification must never open serial/GPIO or start engines.
     from comms.mobile_control.integrated import IntegratedGateway
     gateway = IntegratedGateway()
-    print('SELF_CHECK_OK mobile_control=integrated port=8181 admin_auth=removed')
+    print('SELF_CHECK_OK mobile_control=integrated port=8080 admin_auth=removed')
     raise SystemExit(0)
 
 ENABLE_HW_PROTECTION = True

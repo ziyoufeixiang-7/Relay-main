@@ -28,8 +28,8 @@ class FakeEngine:
 async def main():
     if os.environ.get('RELAY_OFFLINE_UI')!='1':
         raise RuntimeError('Explicit RELAY_OFFLINE_UI=1 is required')
-    g=IntegratedGateway(require_enrollment=False,host='127.0.0.1',port=8181)
-    g.origins={'http://127.0.0.2:8181'}
+    g=IntegratedGateway(require_enrollment=False,host='127.0.0.1',port=8080)
+    g.origins={'http://127.0.0.2:8080'}
     g.frontend_path=os.environ['RELAY_OFFLINE_FRONTEND']
     original=g.state
     g.state=lambda c:{**original(c),'simulation':True}
@@ -39,7 +39,7 @@ async def main():
     async def pulse():
         while True:
             await engine.publish();await asyncio.sleep(.2)
-    async with g.StartServer(), serve(g._commands,'127.0.0.2',8181,process_request=g.http_request):
+    async with g.StartServer(), serve(g._commands,'127.0.0.2',8080,process_request=g.http_request):
         task=asyncio.create_task(pulse())
         print('OFFLINE integrated UI harness ready (no hardware)',flush=True)
         try:await asyncio.Future()

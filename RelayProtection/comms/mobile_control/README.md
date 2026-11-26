@@ -8,7 +8,7 @@ Legacy frontend gateway scripts remain compatible with older deployed binaries;
 they must not run alongside the integrated gateway on the same device.
 
 `RELAY_MOBILE_CONTROL=1` selects `IntegratedGateway` in SysEngine. It serves the
-`6phase-test` single-file page and WebSocket protocol on 8181; there is no upstream
+`6phase-test` single-file page and WebSocket protocol on 8080; there is no upstream
 WebSocket, redirect rule or second control process. Without this opt-in SysEngine
 retains the original direct 8080 protocol. Neither path implements `adminAuth`.
 Calibration's own authentication is unchanged.
