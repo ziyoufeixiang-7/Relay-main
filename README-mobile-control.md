@@ -29,3 +29,7 @@ RelayProtection 和 RelayProtection/comms/mobile_control 加入 PYTHONPATH，
 实际设备可继续源码部署，无需为每次界面或控制修改生成 Nuitka 二进制。
 源码、设备参数、页面及虚拟环境分别保存在版本目录，切换前备份原版本。
 源码推送不等于设备更新或云端发布。模拟结果不能作为真实输出验收。
+
+网络服务打包与安装说明见 deploy/mobile-network.md；Pi50 迁移和部署后验证结果见
+deploy/pi50-network-deployment-2026-11-27.md。首次云端构建须完整运行 build.sh，不能用
+--pack-only 代替修改后源码的编译。
