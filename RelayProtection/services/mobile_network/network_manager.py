@@ -18,6 +18,10 @@ if os.environ.get('RELAY_TEST_DEVICE_CONFIG'):
     SOCKET = '/run/relay-mobile-network-test/control.sock'
     STATE = Path('/var/lib/relay-mobile-test/selection.json')
 
+SOCKET = os.environ.get('RELAY_NETWORK_SOCKET', SOCKET)
+PRESERVE_ONCE = Path(os.environ.get('RELAY_NETWORK_PRESERVE_FILE', '/run/relay-network-preserve-once'))
+SETUP_SCRIPT = Path(__file__).resolve().with_name('setup-relay-hotspot.sh')
+
 class NetworkManager:
     def __init__(self):
         self.lock = asyncio.Lock()
@@ -123,7 +127,7 @@ class NetworkManager:
                     await self.run('/usr/bin/nmcli', 'connection', 'modify', 'uuid', existing['id'],
                         '802-11-wireless.ssid', ssid, '802-11-wireless-security.psk', password)
                 else:
-                    setup = str(Path(__file__).resolve().parents[2] / 'scripts/setup-relay-hotspot.sh') if TEST_CONFIG else '/opt/relay-control-gateway/setup-relay-hotspot.sh'
+                    setup = str(SETUP_SCRIPT)
                     await self.run('/bin/bash', setup, IFACE, ssid, '--prepare',
                     input_data=(password + '\n').encode())
                 return await self.status()
@@ -195,12 +199,20 @@ class NetworkManager:
             if hotspot and hotspot['id'] != current:
                 await self.activate(hotspot)
 
+async def restore_startup(manager):
+    # Installation/restart handover must retain the live Wi-Fi and wired connection.
+    # /run is cleared at boot, so normal saved-selection restoration still runs then.
+    preserve = PRESERVE_ONCE.exists()
+    PRESERVE_ONCE.unlink(missing_ok=True)
+    if not preserve:
+        await manager.restore()
+        if manager.wired:
+            await manager.wired.restore()
+
 async def main():
     import grp
     manager = NetworkManager()
-    await manager.restore()
-    if manager.wired:
-        await manager.wired.restore()
+    await restore_startup(manager)
     async def handle(reader, writer):
         try:
             if TEST_CONFIG:

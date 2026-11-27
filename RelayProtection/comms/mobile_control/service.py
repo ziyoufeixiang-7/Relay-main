@@ -512,7 +512,7 @@ class Gateway:
                     await self.states()
 
     async def network_rpc(self, data):
-        socket = os.environ.get('RELAY_TEST_NETWORK_SOCKET', '/run/relay-network/control.sock') if self.ui_mirror else '/run/relay-network/control.sock'
+        socket = os.environ.get('RELAY_NETWORK_SOCKET') or (os.environ.get('RELAY_TEST_NETWORK_SOCKET', '/run/relay-network/control.sock') if self.ui_mirror else '/run/relay-network/control.sock')
         reader, writer = await asyncio.open_unix_connection(socket)
         try:
             writer.write((json.dumps(data) + '\n').encode())

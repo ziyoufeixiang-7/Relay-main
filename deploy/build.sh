@@ -83,6 +83,13 @@ if [ -f "$DIST/config/calibration_ac_frequency.json" ]; then
 fi
 
 cp "$SRC_DIR/Updater.py" "$DIST/Updater.py"
+# The privileged helper uses the device's system Python and standard library.
+# Copy Python sources explicitly: Nuitka data-directory inclusion skips .py files.
+mkdir -p "$DIST/services/mobile_network"
+for name in network_manager.py wired_network.py test_device_config.py setup-relay-hotspot.sh install_service.py; do
+    cp "$SRC_DIR/services/mobile_network/$name" "$DIST/services/mobile_network/$name"
+done
+chmod 755 "$DIST/services/mobile_network/setup-relay-hotspot.sh"
 
 rm -f "$BACKEND_ARCHIVE"
 tar -czf "$BACKEND_ARCHIVE" -C "$DIST" .

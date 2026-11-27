@@ -106,7 +106,7 @@ EOF
 
     # Install dependencies
     apt-get update -qq && log_ok "APT updated" || log_fail "APT update"
-    apt-get install -y --no-install-recommends libftdi1-2 openocd gpiod && log_ok "Dependencies installed" || log_fail "Package install"
+    apt-get install -y --no-install-recommends libftdi1-2 openocd gpiod python3 network-manager dnsmasq-base nftables iproute2 && log_ok "Dependencies installed" || log_fail "Package install"
 
     # Watchdog
     mkdir -p /etc/systemd/system.conf.d
@@ -299,6 +299,11 @@ SERVICE_EOF
 
     systemctl daemon-reload || true
     systemctl enable relay-protection && log_ok "relay-protection.service registered and enabled" || log_fail "Service enable"
+
+    # Backend-owned network helper: prepares services without activating a hotspot.
+    python3 /opt/RelayProtection/services/mobile_network/install_service.py \
+        --install-dir /opt/RelayProtection --enable-only \
+        && log_ok "Backend mobile network service installed" || { log_fail "Mobile network service install"; return 1; }
 
     # Chromium kiosk autostart
     raspi-config nonint do_boot_behaviour B4 && log_ok "Desktop autologin enabled" || log_fail "Autologin"

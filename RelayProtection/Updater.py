@@ -119,11 +119,47 @@ def _atomicSwapDirectories(stagingDirName):
     os.rename(stagingDirName, installDir)
     os.sync()
 
+def _installNetworkService(root, checkOnly=False):
+    installer = os.path.join(root, "services", "mobile_network", "install_service.py")
+    if os.path.isfile(installer):
+        command = [sys.executable, installer, "--install-dir", root,
+                   "--backend-unit", serviceName + ".service"]
+        if checkOnly:
+            command.append("--check")
+        result = subprocess.run(command, capture_output=True, text=True, timeout=60)
+        if result.returncode:
+            raise RuntimeError("Mobile network service installation failed: " + result.stderr.strip())
+    elif not checkOnly:
+        # A rollback to a version predating this service must not leave a unit
+        # pointing at helper files which no longer exist. Never remove legacy units.
+        unit = "/etc/systemd/system/relay-network-manager.service"
+        marker = "# Managed backend mobile network service"
+        try:
+            with open(unit, encoding="utf-8") as stream:
+                contents = stream.read()
+                managed = contents.startswith(marker) and os.path.join(root, "services", "mobile_network") in contents
+        except OSError:
+            managed = False
+        if managed:
+            subprocess.run(["systemctl", "disable", "--now", "relay-network-manager.service"], check=False)
+            os.unlink(unit)
+            for path in ["/etc/systemd/system/relay-network-manager.service.d/99-backend-mobile-network.conf",
+                         "/etc/systemd/system/" + serviceName + ".service.d/mobile-network.conf"]:
+                try:
+                    with open(path, encoding="utf-8") as stream:
+                        owned = stream.readline().strip() == marker
+                    if owned:
+                        os.unlink(path)
+                except OSError:
+                    pass
+            subprocess.run(["systemctl", "daemon-reload"], check=False)
+
 def _finalizeUpdateAndRestart(successMessage):
     """Make the main binary executable, emit success, and restart the system service."""
     binaryFile = os.path.join(installDir, "SysEngine.bin")
     if os.path.isfile(binaryFile):
         os.chmod(binaryFile, 0o755)
+    _installNetworkService(installDir)
     os.sync()
     _emitStatus("success", msg=successMessage)
     time.sleep(1.0)
@@ -192,9 +228,19 @@ def _performUpdate(cliArgs):
         shutil.copy2(frontendIndex, os.path.join(stagingDir, "index.html"))
         shutil.copy2(versionFile, os.path.join(stagingDir, "version.json"))
         _copyProtectedFiles(installDir, stagingDir)
+        _installNetworkService(stagingDir, checkOnly=True)
         os.sync()
         _atomicSwapDirectories(stagingDir)
-    _finalizeUpdateAndRestart("Update completed successfully")
+    try:
+        _finalizeUpdateAndRestart("Update completed successfully")
+    except Exception:
+        # Installer rolls back its units; restore the matching app before reporting failure.
+        failed = installDir + ".network-failed-" + str(time.time_ns())
+        if os.path.isdir(backupDir):
+            os.rename(installDir, failed)
+            os.rename(backupDir, installDir)
+            os.sync()
+        raise
 
 
 def _performRollback():

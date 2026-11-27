@@ -6,7 +6,7 @@ BUILD=Path('/home/pi/relay-integrated-build')
 ROOT=Path('/opt/relay-integrated-test')
 ORIGINAL=Path('/opt/RelayProtection')
 META=json.loads((BUILD/'deployment.json').read_text())
-IDENT='20261126-'+META['backend_commit'][:7]+'-'+META['frontend_commit'][:7]+'-'+uuid.uuid4().hex[:6]
+IDENT=META.get('client_date','2026-11-27').replace('-','')+'-'+META['backend_commit'][:7]+'-'+META['frontend_commit'][:7]+'-'+uuid.uuid4().hex[:6]
 RELEASE=ROOT/'releases'/IDENT
 BACKUP=ROOT/'backups'/IDENT
 NETWORK_DROP=Path('/etc/systemd/system/relay-mobile-network-test.service.d/50-integrated-source.conf')
@@ -50,6 +50,12 @@ state={key:run('systemctl',action,'relay-protection.service',check=False) for ke
 state.update(gateway_active=user('is-active','relay-ui-mirror-test.service',check=False),gateway_enabled=user('is-enabled','relay-ui-mirror-test.service',check=False),network_active=run('systemctl','is-active','relay-mobile-network-test.service',check=False),network_drop_existed=NETWORK_DROP.exists(),original_html_sha_existed=(ORIGINAL/'index.html.sha256').exists())
 state.update(previous_release=str(PREVIOUS) if PREVIOUS else None, integrated_active=run('systemctl','is-active','relay-integrated-test.service',check=False), integrated_enabled=run('systemctl','is-enabled','relay-integrated-test.service',check=False), unit_existed=UNIT.exists())
 if UNIT.exists():shutil.copy2(UNIT,BACKUP/'integrated.service')
+state.update(legacy_network_active=run('systemctl','is-active','relay-network-manager.service',check=False),
+             legacy_network_enabled=run('systemctl','is-enabled','relay-network-manager.service',check=False))
+network_paths=[Path('/etc/systemd/system/relay-mobile-network-test.service'),
+               Path('/etc/systemd/system/relay-mobile-network-test.service.d/99-backend-mobile-network.conf'),
+               Path('/etc/systemd/system/relay-integrated-test.service.d/mobile-network.conf')]
+state['network_files']={str(path):(path.read_text() if path.exists() else None) for path in network_paths}
 state['protected']={str(p):digest(p) for p in [ORIGINAL/'SysEngine.bin',*sorted((ORIGINAL/'config').glob('*.json'))]}
 (BACKUP/'state.json').write_text(json.dumps(state,indent=2))
 if NETWORK_DROP.exists():shutil.copy2(NETWORK_DROP,BACKUP/'network-drop.conf')
@@ -62,7 +68,7 @@ shutil.copytree(BUILD/'RelayProtection',RELEASE/'app',ignore=shutil.ignore_patte
 shutil.copytree(PREVIOUS/'runtime' if PREVIOUS else BUILD/'.venv',RELEASE/'runtime',symlinks=True,ignore=shutil.ignore_patterns('__pycache__'))
 for p in ((PREVIOUS/'app/config') if PREVIOUS else ORIGINAL/'config').glob('*.json'):shutil.copy2(p,RELEASE/'app/config'/p.name)
 for name in ['index.html','index.html.sha256']:shutil.copy2(BUILD/'frontend'/name,RELEASE/name)
-shutil.copytree(BUILD/'RelayProtection/services/mobile_network',RELEASE/'network')
+# The helper runs from the backend app directory; no frontend or duplicate network tree.
 META['deployment_kind']='python-source'
 META['backend_entry_sha256']=digest(RELEASE/'app/SysEngine.py')
 META['release']=str(RELEASE)
@@ -88,7 +94,15 @@ if s['previous_release']:
     pending=current.with_name('current.rollback');pending.unlink(missing_ok=True)
     pending.symlink_to(s['previous_release']);os.replace(pending,current)
 else:current.unlink(missing_ok=True)
+for name,contents in s.get('network_files',{{}}).items():
+    path=Path(name)
+    if contents is None:path.unlink(missing_ok=True)
+    else:path.parent.mkdir(parents=True,exist_ok=True);path.write_text(contents)
 run('systemctl','daemon-reload')
+if s.get('legacy_network_enabled')=='enabled':run('systemctl','enable','relay-network-manager.service')
+if s.get('legacy_network_active')=='active':run('systemctl','start','relay-network-manager.service')
+Path('/run/relay-mobile-network-test-preserve-once').write_text('rollback\n')
+if s['network_active']=='active':run('systemctl','restart','relay-mobile-network-test.service')
 if s['integrated_enabled']=='enabled':run('systemctl','enable','relay-integrated-test.service')
 if s['integrated_active']=='active':run('systemctl','start','relay-integrated-test.service')
 shutil.copy2(b/'index.html','/opt/RelayProtection/index.html')
@@ -101,17 +115,24 @@ if s['gateway_active']=='active':run(*u,'start','relay-ui-mirror-test.service')
 print('Previous services, source release and HTML restored; refresh the local page.')
 '''
 (BACKUP/'rollback.py').write_text(rollback)
+run('python3',str(RELEASE/'app/services/mobile_network/install_service.py'),
+    '--install-dir',str(RELEASE/'app'),'--unit','relay-mobile-network-test.service',
+    '--backend-unit','relay-integrated-test.service',
+    '--test-config','/etc/relay-mobile-test/device.json','--test-user','pi','--check')
 try:
     user('disable','--now','relay-ui-mirror-test.service')
     run('systemctl','disable','--now','relay-protection.service')
     run('systemctl','stop','relay-integrated-test.service')
     pending=ROOT/'current.next';pending.unlink(missing_ok=True);pending.symlink_to(RELEASE);os.replace(pending,ROOT/'current')
     shutil.copy2(BUILD/'relay-integrated-source-test.service','/etc/systemd/system/relay-integrated-test.service')
-    NETWORK_DROP.parent.mkdir(parents=True,exist_ok=True)
-    NETWORK_DROP.write_text('[Service]\nExecStart=\nExecStart=/usr/bin/python3 '+str(RELEASE/'network/network_manager.py')+'\n')
+    # Only the enrolled test socket is used by this backend. Retire the unused
+    # frontend production helper so two managers cannot race on wlan0.
+    run('systemctl','disable','--now','relay-network-manager.service')
+    run('python3',str(RELEASE/'app/services/mobile_network/install_service.py'),
+        '--install-dir',str(RELEASE/'app'),'--unit','relay-mobile-network-test.service',
+        '--backend-unit','relay-integrated-test.service',
+        '--test-config','/etc/relay-mobile-test/device.json','--test-user','pi')
     run('systemctl','daemon-reload')
-    # The network helper restores saved profiles on startup. Defer its restart
-    # to preserve the current Wi-Fi; the next normal boot uses the migrated path.
     run('systemctl','enable','--now','relay-integrated-test.service')
     # Deploy both components before the final test stage, as requested.
     for name in ['index.html','index.html.sha256']:
