@@ -83,6 +83,19 @@ class InstallerTests(unittest.TestCase):
         self.assertLess(stop, start)
         self.assertTrue(all(call[0] == 'systemctl' for call in self.calls))
 
+    def test_ensure_leaves_matching_active_service_unchanged(self):
+        self.install()
+        self.calls.clear()
+        original_exists = Path.exists
+        def exists(path):
+            return str(path) == '/run/relay-network/control.sock' or original_exists(path)
+        def active(*args, **kwargs):
+            self.calls.append(args)
+            return {'is-active':'active','is-enabled':'enabled'}.get(args[1], '')
+        with patch.object(Path, 'exists', exists), patch.object(installer, 'run', side_effect=active):
+            self.install('--ensure')
+        self.assertEqual([c[1] for c in self.calls], ['is-active','is-enabled'])
+
     def test_enable_only_never_starts_or_stops_network_service(self):
         self.install('--enable-only')
         self.assertFalse(any(call[1] in ('start', 'stop', 'restart') for call in self.calls))

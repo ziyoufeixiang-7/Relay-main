@@ -8,6 +8,11 @@ if '--self-check' in sys.argv:
     # Compiled-artifact verification must never open serial/GPIO or start engines.
     from comms.mobile_control.integrated import IntegratedGateway
     gateway = IntegratedGateway()
+    from pathlib import Path
+    bundle_root = Path(os.environ.get('RELAY_INSTALL_DIR') or Path(sys.argv[0]).resolve().parent)
+    for name in ('network_manager.py', 'wired_network.py', 'test_device_config.py', 'setup-relay-hotspot.sh', 'install_service.py'):
+        if not (bundle_root / 'services/mobile_network' / name).is_file():
+            raise RuntimeError('Missing backend network runtime file: ' + name)
     print('SELF_CHECK_OK mobile_control=integrated port=8080 admin_auth=removed')
     raise SystemExit(0)
 
@@ -72,6 +77,9 @@ async def main() -> None:
     logger.info("Initialization started...")
 
     main_loop = asyncio.get_running_loop()
+    if os.environ.get("RELAY_MOBILE_CONTROL", "1") != "0":
+        from comms.mobile_control.bootstrap import ensure_network_service
+        await asyncio.to_thread(ensure_network_service)
     wsGateway = WSGateway()  # Validate test enrollment before touching hardware.
 
     shared = {}

@@ -42,6 +42,7 @@ def main():
     parser.add_argument('--test-user')
     parser.add_argument('--enable-only', action='store_true')
     parser.add_argument('--check', action='store_true')
+    parser.add_argument('--ensure', action='store_true', help='Keep an already-correct active instance unchanged')
     args = parser.parse_args()
     root = Path(args.install_dir).resolve()
     # Paths are written into systemd directives, not interpreted as shell commands.
@@ -126,6 +127,9 @@ Environment=RELAY_NETWORK_SOCKET={socket}
     previous = {path: path.read_bytes() if path.exists() else None for path in outputs}
     active = run('systemctl', 'is-active', args.unit, check=False) == 'active'
     enabled = run('systemctl', 'is-enabled', args.unit, check=False) == 'enabled'
+    if args.ensure and active and enabled and all(previous[path] == contents.encode('utf-8') for path, contents in outputs.items()) and Path(socket).exists():
+        print(f'{args.unit} already configured and active')
+        return
     try:
         for path, contents in outputs.items():
             atomic_write(path, contents)
